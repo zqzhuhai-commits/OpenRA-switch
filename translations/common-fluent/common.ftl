@@ -118,9 +118,9 @@ label-actor-type = Type: { $actorType }
 ## CommonSelectorLogic
 options-common-selector =
     .search-results = Search Results
-    .all = All
+    .all = 全部
     .multiple = Multiple
-    .none = None
+    .none = 无
 
 ## SaveMapLogic
 label-unpacked-map = 解包
@@ -306,31 +306,31 @@ dialog-kick-spectators =
 
 ## LobbyLogic
 options-slot-admin =
-    .add-bots = Add
-    .remove-bots = Remove
-    .configure-bots = Configure Bots
-    .teams-count = { $count } Teams
-    .humans-vs-bots = Humans vs Bots
-    .free-for-all = Free for all
-    .configure-teams = Configure Teams
+    .add-bots = 添加
+    .remove-bots = 移除
+    .configure-bots = 配置电脑
+    .teams-count = { $count }支队伍
+    .humans-vs-bots = 玩家对抗电脑
+    .free-for-all = 各自为战
+    .configure-teams = 配置队伍
 
 ## LobbyLogic, InGameChatLogic
-button-general-chat = All
-button-team-chat = Team
+button-general-chat = 全部
+button-team-chat = 队伍
 
 ## LobbyOptionsLogic, MissionBrowserLogic
-label-not-available = Not Available
+label-not-available = 不可用
 
 ## LobbyUtils
 options-lobby-slot =
-    .slot = Slot
-    .open = Open
-    .closed = Closed
-    .bots = Bots
-    .bots-disabled = Bots Disabled
+    .slot = 席位
+    .open = 开放
+    .closed = 关闭
+    .bots = 电脑
+    .bots-disabled = 禁用电脑
 
 ## MapPreviewLogic
-label-connecting = Connecting...
+label-connecting = 正在连接……
 label-downloading-map = Downloading { $size } kB
 label-downloading-map-progress = Downloading { $size } kB ({ $progress }%)
 button-retry-install = Retry Install
@@ -339,13 +339,13 @@ button-retry-search = Retry Search
 label-created-by = Created by { $author }
 
 ## SpawnSelectorTooltipLogic
-label-disabled-spawn = Disabled spawn
-label-available-spawn = Available spawn
+label-disabled-spawn = 已禁用的出生点
+label-available-spawn = 可用出生点
 
 ## DisplaySettingsLogic
 options-camera =
     .close = Close
-    .medium = Medium
+    .medium = 中
     .far = Far
     .furthest = Furthest
 
@@ -357,7 +357,7 @@ options-display-mode =
 label-video-display-index = Display { $number }
 
 options-status-bars =
-    .standard = Standard
+    .standard = 标准
     .show-on-damage = Show On Damage
     .always-show = Always Show
 
@@ -371,7 +371,7 @@ checkbox-frame-limiter = Enable Frame Limiter ({ $fps } FPS)
 ## HotkeysSettingsLogic
 label-original-notice = The default is "{ $key }"
 label-duplicate-notice = This is already used for "{ $key }" in the { $context } context
-hotkey-context-any = Any
+hotkey-context-any = 随机
 
 ## GameplaySettingsLogic
 auto-save-interval =
@@ -384,7 +384,7 @@ auto-save-interval =
     .minute-options =
         { $minutes ->
             [one] 1 minute
-           *[other] { $minutes } minutes
+           *[other] { $minutes }分钟
         }
 
 auto-save-max-file-number = { $saves } saves
@@ -392,7 +392,7 @@ auto-save-max-file-number = { $saves } saves
 ## InputSettingsLogic
 options-mouse-scroll-type =
     .disabled = Disabled
-    .standard = Standard
+    .standard = 标准
     .inverted = Inverted
     .joystick = Joystick
 
@@ -478,7 +478,7 @@ label-player-count =
     }
 label-map-size-huge = Huge
 label-map-size-large = Large
-label-map-size-medium = Medium
+label-map-size-medium = 中
 label-map-size-small = Small
 label-map-searching-count =
     { $count ->
@@ -504,7 +504,7 @@ dialog-delete-all-maps =
     .confirm = Delete
 
 options-order-maps =
-    .player-count = Players
+    .player-count = 玩家人数
     .title = Title
     .date = Date
     .size = Size
@@ -662,7 +662,7 @@ label-bots-count =
     }
 
 ## ServerListLogic, ReplayBrowserLogic, ObserverShroudSelectorLogic
-label-players = Players
+label-players = 玩家人数
 
 ## ServerListLogic, GameInfoStatsLogic
 label-spectators = Spectators
@@ -762,20 +762,20 @@ description-actor-map-overlay = toggles the actor map overlay.
 
 ## MapOptions, MissionBrowserLogic
 options-game-speed =
-    .slowest = Slowest
-    .slower = Slower
-    .normal = Normal
-    .fast = Fast
-    .faster = Faster
-    .fastest = Fastest
+    .slowest = 最慢
+    .slower = 较慢
+    .normal = 正常
+    .fast = 快速
+    .faster = 更快
+    .fastest = 最快
 
 ## TimeLimitManager
 options-time-limit =
-    .no-limit = No limit
+    .no-limit = 不限时
     .options =
         { $minutes ->
-            [one] { $minutes } minute
-           *[other] { $minutes } minutes
+            [one] { $minutes }分钟
+           *[other] { $minutes }分钟
         }
 
 notification-time-limit-expired = Time limit has expired.
@@ -840,7 +840,7 @@ notification-opened = Opened
 
 ## MapOverlaysLogic
 mirror-mode =
-    .none = None
+    .none = 无
     .flip = Flip
     .rotate = Rotate
 
@@ -875,7 +875,7 @@ keycode-modifier =
     .meta = Meta
     .cmd = Cmd
     .shift = Shift
-    .none = None
+    .none = 无
 
 ## KeycodeExts
 keycode =
@@ -1026,7 +1026,7 @@ keycode =
     .alterase = AltErase
     .sysreq = SysReq
     .cancel = Cancel
-    .clear = Clear
+    .clear = 空地
     .prior = Prior
     .return2 = Return
     .separator = Separator

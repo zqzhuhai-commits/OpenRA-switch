@@ -1,61 +1,61 @@
 ## Shroud
 checkbox-fog-of-war =
-    .label = Fog of War
-    .description = Line of sight is required to view enemy forces
+    .label = 战争迷雾
+    .description = 需要视野才能看到敌军
 
 checkbox-explored-map =
-    .label = Explored Map
-    .description = Initial map shroud is revealed
+    .label = 已探索地图
+    .description = 开局揭开地图黑幕
 
 ## DeveloperMode
 checkbox-debug-menu =
-    .label = Debug Menu
-    .description = Enables cheats and developer commands
+    .label = 调试菜单
+    .description = 启用作弊与开发者命令
 
 ## CrateSpawner
 checkbox-crates =
-    .label = Crates
-    .description = Collect crates with units to receive random bonuses or penalties
+    .label = 补给箱
+    .description = 派单位拾取补给箱，获得随机奖励或惩罚
 
 ## MapBuildRadius
 checkbox-ally-build-radius =
-    .label = Build Off Allies
-    .description = Allows allies to place structures within your build area
+    .label = 盟友基地建设
+    .description = 允许盟友在你的建造范围内放置建筑
 
 checkbox-build-radius =
-    .label = Limit Build Area
-    .description = Limits structure placement to areas around Construction Yards
+    .label = 限制建造范围
+    .description = 只能在建造厂周围放置建筑
 
 ## MapOptions
 checkbox-short-game =
-    .label = Short Game
-    .description = Players are defeated when their bases are destroyed
+    .label = 快速决战
+    .description = 基地被摧毁即判定战败
 
 dropdown-tech-level =
-    .label = Tech Level
-    .description = The units and abilities available to players
+    .label = 科技等级
+    .description = 决定玩家可使用的单位与能力
 
 ## MapOptions
 dropdown-game-speed =
-    .label = Game Speed
-    .description = Controls the rate at which time passes
+    .label = 游戏速度
+    .description = 控制游戏时间流逝的速度
 
 ## MapStartingLocations
 checkbox-separate-team-spawns =
-    .label = Separate Team Spawns
-    .description = Players without assigned spawn points start as far as possible from enemy players
+    .label = 分离敌我出生点
+    .description = 未指定出生点的玩家将尽量远离敌方出生
 
 ## SpawnStartingUnits
 dropdown-starting-units =
-    .label = Starting Units
-    .description = The units players start with at the beginning of the game
+    .label = 初始部队
+    .description = 玩家在游戏开始时拥有的单位
 
 ## TimeLimitManager
 dropdown-time-limit =
-    .label = Time Limit
-    .description = The player or team with the highest score at the end of this time wins
+    .label = 时间限制
+    .description = 时间结束时得分最高的玩家或队伍获胜
 
 ## Tooltip
 label-tooltip-prefix =
-    .ally = Ally
-    .enemy = Enemy
+    .ally = 盟友
+    .enemy = 敌人

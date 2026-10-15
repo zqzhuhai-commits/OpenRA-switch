@@ -16,16 +16,7 @@ button-command-bar-force-move =
 
     左键点击图标，然后右键点击目标。
     指挥单位时按住 <(Alt)> 可临时启用。
-    .tooltip = Force Move
-    .tooltipdesc =
-    Selected units will move to the desired location
-     - Default activity for the target is suppressed
-     - Vehicles will attempt to crush enemies at the target location
-     - Helicopters will land at the target location
-     - Chrono Tanks will teleport towards the target location
 
-    Left-click icon then right-click on target.
-    Hold <(Alt)> to activate temporarily while commanding units.
 
 button-command-bar-force-attack =
     .tooltip = 强制攻击
@@ -38,16 +29,7 @@ button-command-bar-force-attack =
 
     左键点击图标，然后右键点击目标。
     指挥单位时按住 <(Ctrl)> 可临时启用。
-    .tooltip = Force Attack
-    .tooltipdesc =
-    Selected units will attack the targeted unit or location
-     - Default activity for the target is suppressed
-     - Allows targeting of own or ally forces
-     - Long-range artillery units will always target the
-       location, ignoring units and buildings
 
-    Left-click icon then right-click on target.
-    Hold <(Ctrl)> to activate temporarily while commanding units.
 
 button-command-bar-deploy =
     .tooltip = 展开
@@ -61,17 +43,6 @@ button-command-bar-deploy =
      - 飞行器将返回基地
 
     立即作用于选中的单位。
-    .tooltip = Deploy
-    .tooltipdesc =
-    Selected units will perform their default deploy activity
-     - MCVs will unpack into a Construction Yard
-     - Construction Yards will re-pack into a MCV
-     - Transports will unload their passengers
-     - Demolition Trucks and MAD Tanks will self-destruct
-     - Minelayers will deploy a mine
-     - Aircraft will return to base
-
-    Acts immediately on selected units.
 
 
 button-top-buttons-beacon-tooltip = 放置信标
