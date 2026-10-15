@@ -141,7 +141,7 @@ namespace OpenRA.Network
 					{
 						var client = new TcpClient(endpoint.AddressFamily);
 #if SWITCH
-					try { client.NoDelay = true; } catch (SocketException) { }
+					// mono-nx: leave TCP_NODELAY unset (defaults); switching is unsupported.
 #else
 					client.NoDelay = true;
 #endif

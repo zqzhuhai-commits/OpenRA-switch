@@ -72,10 +72,10 @@ namespace OpenRA.Server
 		{
 			var (server, socket) = ((Server, Socket))s;
 #if SWITCH
-			// mono-nx: switching blocking mode on the socket is not supported,
-			// so leave the socket in its default (blocking) mode.
-			try { socket.Blocking = false; } catch (SocketException) { }
-			try { socket.NoDelay = true; } catch (SocketException) { }
+			// mono-nx: switching blocking mode is not supported (SetHandleNonBlocking
+			// throws "Operation canceled") and a failed switch corrupts socket state.
+			// Keep the socket fully blocking: poll() with a 100ms timeout still yields
+			// a responsive read loop, and single-player traffic is small.
 #else
 			socket.Blocking = false;
 			socket.NoDelay = true;
@@ -177,9 +177,8 @@ namespace OpenRA.Server
 							{
 								Log.Write("server", $"Non-blocking send of {length - start} bytes failed. Falling back to blocking send.");
 #if SWITCH
-								try { socket.Blocking = true; } catch (SocketException) { }
+								// Blocking socket never reports WouldBlock; send directly.
 								sent = socket.Send(data, start, length - start, SocketFlags.None);
-								try { socket.Blocking = false; } catch (SocketException) { }
 #else
 								socket.Blocking = true;
 								sent = socket.Send(data, start, length - start, SocketFlags.None);
@@ -198,6 +197,14 @@ namespace OpenRA.Server
 			{
 				Log.Write("server", $"Closing socket connection to {EndPoint} because of socket error: {e}");
 			}
+#if SWITCH
+			catch (Exception e)
+			{
+				// mono-nx may surface non-SocketException faults (e.g. platform
+				// support gaps). Close the connection instead of crashing the process.
+				Log.Write("server", $"Closing socket connection to {EndPoint} because of unexpected error: {e}");
+			}
+#endif
 			finally
 			{
 				server.OnConnectionDisconnect(this);
