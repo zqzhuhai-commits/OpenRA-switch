@@ -264,7 +264,11 @@ namespace OpenRA
 		public bool DisableGLDebugMessageCallback = false;
 
 		[Desc("Disable operating-system provided cursor rendering.")]
+#if SWITCH
+		public bool DisableHardwareCursors = true;
+#else
 		public bool DisableHardwareCursors = false;
+#endif
 
 		[Desc("Display index to use in a multi-monitor fullscreen setup.")]
 		public int VideoDisplay = 0;
@@ -353,7 +357,11 @@ namespace OpenRA
 
 		public MPGameFilters MPGameFilters = MPGameFilters.Waiting | MPGameFilters.Empty | MPGameFilters.Protected | MPGameFilters.Started;
 
+#if SWITCH
+		public bool PauseShellmap = true;
+#else
 		public bool PauseShellmap = false;
+#endif
 
 		[Desc("Allow mods to enable the Discord service that can interact with a local Discord client.")]
 		public bool EnableDiscordService = true;

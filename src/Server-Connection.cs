@@ -18,6 +18,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
+using OpenRA.Network;
 
 namespace OpenRA.Server
 {
@@ -41,7 +42,17 @@ namespace OpenRA.Server
 
 		long lastReceivedTime = 0;
 
+		readonly LocalTransport localTransport;
 		readonly BlockingCollection<byte[]> sendQueue = [];
+
+		internal Connection(Server server, LocalTransport transport, string authToken)
+		{
+			PlayerIndex = server.ChooseFreePlayerIndex();
+			AuthToken = authToken;
+			EndPoint = new IPEndPoint(IPAddress.Loopback, 0);
+			localTransport = transport;
+			new Thread(SendReceiveLoop) { Name = "Local server communication", IsBackground = true }.Start((server, (Socket)null));
+		}
 		readonly Queue<int> pingHistory = [];
 
 		public Connection(Server server, Socket socket, string authToken)
@@ -77,8 +88,11 @@ namespace OpenRA.Server
 			// Keep the socket fully blocking: poll() with a 100ms timeout still yields
 			// a responsive read loop, and single-player traffic is small.
 #else
-			socket.Blocking = false;
-			socket.NoDelay = true;
+			if (socket != null)
+			{
+				socket.Blocking = false;
+				socket.NoDelay = true;
+			}
 #endif
 
 			var receiveBuffer = new byte[1024];
@@ -93,9 +107,9 @@ namespace OpenRA.Server
 				while (true)
 				{
 					// Wait up to 100ms for data to arrive before checking for data to send
-					if (socket.Poll(100000, SelectMode.SelectRead))
+					if (localTransport != null || socket.Poll(100000, SelectMode.SelectRead))
 					{
-						var read = socket.Receive(receiveBuffer);
+						var read = localTransport != null ? localTransport.Receive(receiveBuffer, 100) : socket.Receive(receiveBuffer);
 						if (read == 0)
 						{
 							// Empty packet signals that the client has been dropped
@@ -166,6 +180,12 @@ namespace OpenRA.Server
 					// Send all data immediately, we will block again on read
 					while (sendQueue.TryTake(out var data, 0))
 					{
+						if (localTransport != null)
+						{
+							if (!localTransport.SendToClient(data))
+								return;
+							continue;
+						}
 						var start = 0;
 						var length = data.Length;
 
@@ -208,7 +228,8 @@ namespace OpenRA.Server
 			finally
 			{
 				server.OnConnectionDisconnect(this);
-				socket.Dispose();
+				localTransport?.Dispose();
+				socket?.Dispose();
 			}
 		}
 

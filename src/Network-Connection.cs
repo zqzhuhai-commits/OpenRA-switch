@@ -107,6 +107,7 @@ namespace OpenRA.Network
 		readonly Queue<OrderPacket> sentImmediateOrders = [];
 		readonly ConcurrentQueue<(int FromClient, byte[] Data)> receivedPackets = [];
 		TcpClient tcp;
+		Stream localStream;
 		volatile ConnectionState connectionState = ConnectionState.Connecting;
 		volatile int clientId;
 		bool disposed;
@@ -114,6 +115,14 @@ namespace OpenRA.Network
 		public NetworkConnection(ConnectionTarget target)
 		{
 			Target = target;
+			if (target.LocalServer != null)
+			{
+				localStream = target.LocalServer.OpenLocalConnection().ClientStream;
+				EndPoint = new IPEndPoint(IPAddress.Loopback, 0);
+				new Thread(NetworkConnectionReceive) { Name = "Local client receive", IsBackground = true }.Start();
+				return;
+			}
+
 			new Thread(NetworkConnectionConnect)
 			{
 				Name = $"{GetType().Name} (connect to {target})",
@@ -202,7 +211,7 @@ namespace OpenRA.Network
 		{
 			try
 			{
-				var stream = tcp.GetStream();
+				var stream = localStream ?? tcp.GetStream();
 				var handshakeProtocol = stream.ReadInt32();
 
 				if (handshakeProtocol != ProtocolVersion.Handshake)
@@ -224,7 +233,7 @@ namespace OpenRA.Network
 			catch (Exception ex)
 			{
 				ErrorMessage = "Connection failed";
-				Log.Write("client", $"Connection to {EndPoint} failed: {ex.Message}");
+				Log.Write("client", $"Connection to {EndPoint} failed: {ex}");
 			}
 			finally
 			{
@@ -279,7 +288,7 @@ namespace OpenRA.Network
 				}
 
 				queuedSyncPackets.Clear();
-				ms.WriteTo(tcp.GetStream());
+				ms.WriteTo(localStream ?? tcp.GetStream());
 			}
 			catch (SocketException) { /* drop this on the floor; we'll pick up the disconnect from the reader thread */ }
 			catch (ObjectDisposedException) { /* ditto */ }
@@ -384,6 +393,7 @@ namespace OpenRA.Network
 
 			// Closing the stream will cause any reads on the receiving thread to throw.
 			// This will mark the connection as no longer connected and the thread will terminate cleanly.
+			localStream?.Dispose();
 			tcp?.Close();
 
 			Recorder?.Dispose();
