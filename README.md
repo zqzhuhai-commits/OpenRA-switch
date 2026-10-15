@@ -73,12 +73,13 @@ zip -r OpenRA-Switch-Atmosphere.zip pkg/
 
 完整安装包（SD 卡直接覆盖）：见 Releases 页 `OpenRA-Switch-Atmosphere.zip`（含 NRO、mono 运行时、mods、翻译、NSP 前端）。
 
-## 实测状态（2026-10-16）
+## 实测状态（2026-10-16 v24）
 
 - ✅ 主界面可进入（v12 起）
 - ✅ 战役列表 / 任务目标 / 加载台词中文生效（v19/v20）
 - ✅ 加载台词字体放大 2 倍（v20）
-- ⏳ 遭遇战 / 战役开局（Socket 阻塞模式修复后待真机验收）
+- ✅ 遭遇战可玩（v24：并入进程内传输 LocalTransport，真机验证，绕开 libnx socket）
+- ✅ 战役/任务模式可开始（v24：点"开始"时客户端自动先就绪再开局，修复服务器 NotReady 拒绝）
 - ⏳ 触屏操作（单指左键 / 双指右键 / 长按）待验收
 
 遇到闪退请按 Issues 模板（`.github/ISSUE_TEMPLATE/bug_report.md`）提交日志，重点是 `mono/openra/Support/Logs/` 与 `unhandled.log`。

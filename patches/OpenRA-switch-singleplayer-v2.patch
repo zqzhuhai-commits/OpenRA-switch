@@ -1,0 +1,3014 @@
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..7c15a0b
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,3 @@
++**/bin/
++**/obj/
++*.user
+diff --git a/README.md b/README.md
+index 59dd20e..3e5c312 100644
+--- a/README.md
++++ b/README.md
+@@ -2,6 +2,16 @@
+ 
+ 将 OpenRA（红警 1 / 命令与征服 复刻引擎）移植到 Nintendo Switch 大气层（Atmosphere / hbmenu）的原生 homebrew 客户端，含红警 2 风格 NSP 前端直通图标与全面中文化。
+ 
++## 最新单人开局修复（待真机验收）
++
++**第二版已修复第一版的 FileSystemWatcher 启动回归**，并恢复原包未入库的平台与存档路径兼容处理。第二版仍待真机确认。
++
++针对遭遇战连接失败、战役点击开始无反应，新增 **Switch 单人进程内传输**，保留原游戏服务器与协议，绕过 mono-nx 的本机 Socket 故障。
++同时关闭 Mono 详细日志、默认暂停菜单背景战场并使用软件光标。
++
++实际服务器/客户端的遭遇战和战役握手、开局指令测试已在 Linux x64 通过；Switch 真机和帧率改善仍待验收。
++构建、测试和证据见 [修复说明](docs/single-player-fix.md)。仅需覆盖 OpenRA.Game.dll 和 mono/config.ini，NRO/NSP 无需重装。
++
+ ## 运行前提
+ 
+ - Switch 已破解并安装 **Atmosphere + hbmenu**
+@@ -18,7 +28,7 @@
+ | 组件 | 说明 |
+ |---|---|
+ | NRO | mono-nx 交叉构建的 .NET 运行时 + OpenRA 启动器（devkitA64） |
+-| 程序集 | 本机 dotnet 以 `TRACE;SWITCH` 编译的 aarch64 OpenRA 程序集（Release） |
++| 程序集 | dotnet 以 `TRACE;SWITCH` 编译的 .NET 9 托管程序集（Release） |
+ | 数据 | 官方 playtest-20260222 资源 + `global mix database.dat` + NotoSansSC 中文字体 |
+ | 前端 | 自制 NSP forwarder（titleid `010000000000F000`，图标为红警 2 风格徽章） |
+ 
+@@ -78,13 +88,13 @@ zip -r OpenRA-Switch-Atmosphere.zip pkg/
+ - ✅ 主界面可进入（v12 起）
+ - ✅ 战役列表 / 任务目标 / 加载台词中文生效（v19/v20）
+ - ✅ 加载台词字体放大 2 倍（v20）
+-- ⏳ 遭遇战 / 战役开局（Socket 阻塞模式修复后待真机验收）
++- ⏳ 遭遇战 / 战役：进程内连接修复通过桌面握手和开局指令测试，待真机验收
+ - ⏳ 触屏操作（单指左键 / 双指右键 / 长按）待验收
+ 
+ 遇到闪退请按 Issues 模板（`.github/ISSUE_TEMPLATE/bug_report.md`）提交日志，重点是 `mono/openra/Support/Logs/` 与 `unhandled.log`。
+ 
+ ## 已知限制
+ 
+-- 遭遇战/战役已修复"连接中"闪退（socket 阻塞模式容错），若仍有问题请提供 `mono/openra/Support/Logs` 与 `/mono/openra/unhandled.log`
++- 单人模式已改为进程内传输；真机仍需验证实际地图运行。多人联机未在本次修复范围内验证。若仍有问题请提供 `mono/openra/Support/Logs` 与 `/mono/openra/unhandled.log`
+ - 部分游戏内单位/建筑名（rules.ftl）与系统通知（common.ftl）仍有少量英文，逐步补齐中
+ - 仅支持大气层 homebrew 通道；不支持 Switchroot/Linux 方案
+diff --git a/assets/mono-performance-config.ini b/assets/mono-performance-config.ini
+new file mode 100644
+index 0000000..087c4b9
+--- /dev/null
++++ b/assets/mono-performance-config.ini
+@@ -0,0 +1,29 @@
++[mono]
++; Enable mononx logging messages
++logging = false
++; Enable logging from mono's internal logging engine
++runtime_logging = false
++; Runtime files
++icu = /mono/etc/icudt77l.dat
++assembly_dir = "/mono/lib_net9.0;/mono/framework_net9.0"
++config_dir = /mono/etc
++; OpenRA launcher entry point
++default_assembly  = /mono/openra/OpenRA.dll
++; Launch directly into the Red Alert mod instead of the mod chooser
++default_args = Game.Mod=ra
++; Enable remote debugging. When this is true mono will listen with the software debugger on port 55555.
++;enable_debug_server = true
++
++[nx]
++; Redirect all I/O to a log file on the sd card (diagnostics)
++file_io_redirect = /mono/log.txt
++; This is an ugly hack. Currently mono can't reload in the same process. This means that closing the
++; interpreter nro and opening it again will crash. This flag causes the wrapper to call svcExitProcess
++; on exit, terminating the hbmenu as well so the next time we can start fresh
++exit_process_on_end = true
++; OpenGL/Mesa cannot initialize in applet mode (mono reserves half the heap).
++; This flag forces the app to only run as a full application via title takeover:
++; on the HOME menu, hold R while launching any game to open hbmenu with full
++; resources, then launch OpenRA from there. When launched from the Album applet,
++; a clear error message is shown instead of a silent crash.
++force_full_application = true
+diff --git a/docs/single-player-fix.md b/docs/single-player-fix.md
+new file mode 100644
+index 0000000..aad1057
+--- /dev/null
++++ b/docs/single-player-fix.md
+@@ -0,0 +1,84 @@
++# 单人开局与性能修复
++
++适用基线：本仓库 v21 / cf46f6a，以及用户提供的 OpenRA-Switch-Atmosphere (4)(1).zip。
++上游源码固定为 OpenRA playtest-20260222 / 5c51f458f2e9f8ec4921eea8d07823c8358680f8。
++
++## 第二版：启动回归修复
++
++用户新日志 exception-2026-10-15T180503Z/180526Z 明确显示：
++`FileSystemWatcher..ctor -> MapDirectoryTracker..ctor -> MapCache.LoadMaps` 抛 PlatformNotSupportedException。
++核对上传原包的 DLL 后发现，它已有未入库的 watcher 容错，以及 Switch 平台和 Support 路径适配。
++第一版按仓库覆盖文件重编译时遗漏了这些处理，导致尚未进入主菜单就退出。
++
++第二版新增 MapDirectoryTracker.cs 与 Platform.cs 覆盖文件：
++
++- SWITCH 不创建 FileSystemWatcher，启动时地图枚举和加载仍由 MapCache 正常完成。
++- 退出时不访问不存在的 watcher。桌面构建保留文件监视功能。
++- 保持原包的 Linux 兼容平台标识、Nintendo Switch 系统名称与引擎目录下的 Support 路径。
++- 新增 MapDirectoryTrackerStartup：将文件监视器替换为始终抛 PlatformNotSupportedException 的测试替身，验证启动、更新、重复 Dispose 均可完成。
++- 更新完整握手测试，同时检查平台识别、Support 路径及实际地图加载。
++
++以上修复已编译及在桌面回归通过；第二版仍待 Switch 真机确认主菜单和实际游戏画面。
++
++## 故障证据
++
++最新 server.log 中，本地客户端连接 127.0.0.1 后，Server.Connection.SendReceiveLoop
++以 SocketException (140): Operation canceled 结束。client.log 随后记录握手读取到 EOF。
++战役使用 CreateAndStartLocalServer，遭遇战使用 CreateLocalServer；二者都走同一服务器连接。
++现有 SWITCH 分支已跳过 Blocking/NoDelay，说明只绕过这两个属性仍不足以解决该运行时的本机连接问题。
++
++## 修复
++
++SWITCH 构建的 Local/Skirmish 服务器使用 LocalTransport 的两个托管字节队列。
++服务器事件线程、服务器 Connection 的帧解析、客户端 NetworkConnection、握手、身份校验、
++房间同步、StartGame、游戏指令及回放路径继续使用原有实现；不使用 EchoConnection 代替游戏服务器。
++该路径不创建 TCP listener、TcpClient 或 Socket，也不发局域网广播。
++多人/专用服务器保留原 TCP 路径。新增的 5 参数构造函数保留原 4 参数构造函数以兼容现有模组 DLL。
++
++性能改动：
++
++- mono/config.ini 关闭 logging 和 runtime_logging，保留普通错误日志输出。
++- SWITCH 默认 PauseShellmap=true，暂停菜单背景战场的逻辑运算。
++- SWITCH 默认 DisableHardwareCursors=true，直接使用现有软件光标，避免不支持的硬件光标初始化。
++- 不调整战局模拟速度、资源、AI、单位上限或 CPU 频率，也未承诺特定帧率。
++- 用户 settings.yaml 如显式保存了不同的菜单/光标设置，其显式设置仍优先。
++
++## 构建
++
++需要 .NET 9 SDK 和独立的上游源码 checkout：
++
++```sh
++git clone --depth 1 --branch playtest-20260222 https://github.com/OpenRA/OpenRA.git openra-src
++scripts/build-managed-hotfix.sh /absolute/path/openra-src /absolute/path/SD-root
++```
++
++脚本应用本仓库核心源码覆盖文件并输出 OpenRA.Game.dll。
++另将 assets/mono-performance-config.ini 安装为 SD 卡 /mono/config.ini；自定义启动路径的用户应仅修改原配置中的两个 logging 开关。
++不需要重新构建 NRO 或重装 NSP。
++
++## 验证范围
++
++- OpenRA.Game Release / net9.0 / SWITCH 编译：0 错误、0 警告。
++- LocalTransportRegression：10 次独立连接、真实服务端 Connection 的握手字节、
++  分段 170KB 指令、双向收发、关闭/EOF、阻塞读唤醒与超时检查通过。
++- SinglePlayerHandshake：加载原安装包的模组和地图，使用真实 Game.CreateLocalServer、
++  Server、NetworkConnection，完成握手、服务器开局及客户端收到 StartGame：
++  遭遇战“核冬天”和战役“01：激战正酣”通过。
++- 上述测试运行于 Linux x64 / .NET 9，不包含 Switch 真机的画面、Lua 战役运行及帧率测量。
++
++底层回归测试：
++
++```sh
++dotnet run --project tests/LocalTransportRegression -c Release
++```
++
++完整握手测试需要把原安装包的 mono/openra/*.dll 复制到独立 runtime 目录，覆盖新 OpenRA.Game.dll，然后：
++
++```sh
++dotnet build tests/SinglePlayerHandshake -c Release -p:RuntimeDir=/absolute/path/runtime
++dotnet tests/SinglePlayerHandshake/bin/Release/net9.0/SinglePlayerHandshake.dll /absolute/path/package/mono/openra
++```
++
++真机验收：进入遭遇战房间、添加 AI 并开局；启动一关战役；退出后重新开局；测试战役重新开始与存档。
++server.log 应出现 `Accepting single-player client using in-process transport (no sockets).`。
++若进入地图后仍出错，请保留新异常日志；本次修复不能代替对实际游戏运行的真机验证。
+diff --git a/scripts/build-managed-hotfix.sh b/scripts/build-managed-hotfix.sh
+new file mode 100755
+index 0000000..c945fff
+--- /dev/null
++++ b/scripts/build-managed-hotfix.sh
+@@ -0,0 +1,44 @@
++#!/usr/bin/env bash
++# Build the managed-only single-player fix against the original release baseline.
++set -euo pipefail
++repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
++engine_dir="${1:?Usage: build-managed-hotfix.sh /path/to/OpenRA-playtest-20260222 [/path/to/SD-root]}"
++engine_dir="$(cd "$engine_dir" && pwd)"
++expected_sha=5c51f458f2e9f8ec4921eea8d07823c8358680f8
++if [[ "$(git -C "$engine_dir" rev-parse HEAD)" != "$expected_sha" ]]; then
++  echo 'Expected upstream OpenRA playtest-20260222. Use a separate checkout.' >&2
++  exit 1
++fi
++python3 - "$repo_dir" "$engine_dir" <<'PY'
++import sys
++from pathlib import Path
++repo,engine=map(Path,sys.argv[1:])
++mapping={
++ 'Game.cs':'OpenRA.Game/Game.cs',
++ 'AssemblyLoader.cs':'OpenRA.Game/Support/AssemblyLoader.cs',
++ 'DebugAssertionSuppressor.cs':'OpenRA.Game/Support/DebugAssertionSuppressor.cs',
++ 'Settings.cs':'OpenRA.Game/Settings.cs',
++ 'MapDirectoryTracker.cs':'OpenRA.Game/Map/MapDirectoryTracker.cs',
++ 'Platform.cs':'OpenRA.Game/Platform.cs',
++ 'Network-Connection.cs':'OpenRA.Game/Network/Connection.cs',
++ 'Server-Connection.cs':'OpenRA.Game/Server/Connection.cs',
++ 'Server.cs':'OpenRA.Game/Server/Server.cs',
++ 'ConnectionTarget.cs':'OpenRA.Game/Network/ConnectionTarget.cs',
++ 'LocalTransport.cs':'OpenRA.Game/Network/LocalTransport.cs',
++}
++for source,dest in mapping.items():
++ (engine/dest).write_bytes((repo/'src'/source).read_bytes())
++p=engine/'Directory.Build.props';s=p.read_text()
++s=s.replace('<TargetFramework>net8.0</TargetFramework>','<TargetFramework>net9.0</TargetFramework>')
++if '<TargetFramework>net9.0</TargetFramework>' not in s:raise SystemExit('Expected .NET 9 build target')
++marker='<!-- OpenRA Switch managed hotfix -->'
++if marker not in s:
++ s=s.replace('</Project>',marker+'\n<PropertyGroup><DefineConstants>$(DefineConstants);TRACE;SWITCH</DefineConstants><UseAppHost>false</UseAppHost></PropertyGroup>\n</Project>')
++p.write_text(s)
++PY
++"${OPENRA_DOTNET:-dotnet}" build "$engine_dir/OpenRA.Game/OpenRA.Game.csproj" -c Release --nologo -m:1
++if [[ -n "${2:-}" ]]; then
++  mkdir -p "$2/mono/openra"
++  cp "$engine_dir/bin/OpenRA.Game.dll" "$2/mono/openra/"
++fi
++printf '%s\n' 'Built OpenRA.Game.dll. Existing NRO, runtime, maps, translations and saves are retained.'
+diff --git a/src/ConnectionTarget.cs b/src/ConnectionTarget.cs
+new file mode 100644
+index 0000000..0ecc751
+--- /dev/null
++++ b/src/ConnectionTarget.cs
+@@ -0,0 +1,70 @@
++#region Copyright & License Information
++/*
++ * Copyright (c) The OpenRA Developers and Contributors
++ * This file is part of OpenRA, which is free software. It is made
++ * available to you under the terms of the GNU General Public License
++ * as published by the Free Software Foundation, either version 3 of
++ * the License, or (at your option) any later version. For more
++ * information, see COPYING.
++ */
++#endregion
++
++using System;
++using System.Collections.Generic;
++using System.Linq;
++using System.Net;
++
++namespace OpenRA.Network
++{
++	public sealed class ConnectionTarget
++	{
++		readonly DnsEndPoint[] endpoints;
++		internal Server.Server LocalServer { get; }
++
++		internal ConnectionTarget(Server.Server localServer)
++		{
++			LocalServer = localServer;
++			endpoints = [new DnsEndPoint("127.0.0.1", 0)];
++		}
++
++		public ConnectionTarget()
++		{
++			endpoints = [new DnsEndPoint("invalid", 0)];
++		}
++
++		public ConnectionTarget(string host, int port)
++		{
++			endpoints = [new DnsEndPoint(host, port)];
++		}
++
++		public ConnectionTarget(IEnumerable<DnsEndPoint> endpoints)
++		{
++			this.endpoints = endpoints.ToArray();
++			if (this.endpoints.Length == 0)
++				throw new ArgumentException("ConnectionTarget must have at least one address.");
++		}
++
++		public IEnumerable<IPEndPoint> GetConnectEndPoints()
++		{
++			return endpoints.SelectMany(e =>
++			{
++				try
++				{
++					return Dns.GetHostAddresses(e.Host)
++						.Select(a => new IPEndPoint(a, e.Port));
++				}
++				catch (Exception)
++				{
++					return [];
++				}
++			}).ToList();
++		}
++
++		public override string ToString()
++		{
++			return endpoints
++				.Select(e => $"{e.Host}:{e.Port}")
++				.JoinWith("/");
++		}
++	}
++}
+diff --git a/src/Game.cs b/src/Game.cs
+index 0db0a72..7088079 100644
+--- a/src/Game.cs
++++ b/src/Game.cs
+@@ -998,7 +998,14 @@ namespace OpenRA
+ 			{
+ 				new(IPAddress.Loopback, 0)
+ 			};
++#if SWITCH
++			// Campaign and skirmish use the same server protocol without mono-nx sockets.
++			settings.AdvertiseOnLocalNetwork = false;
++			server = new Server.Server(endpoints, settings, ModData,
++				isSkirmish ? ServerType.Skirmish : ServerType.Local, useLocalTransport: true);
++#else
+ 			server = new Server.Server(endpoints, settings, ModData, isSkirmish ? ServerType.Skirmish : ServerType.Local);
++#endif
+ 
+ 			return server.GetEndpointForLocalConnection();
+ 		}
+diff --git a/src/LocalTransport.cs b/src/LocalTransport.cs
+new file mode 100644
+index 0000000..0f51a42
+--- /dev/null
++++ b/src/LocalTransport.cs
+@@ -0,0 +1,124 @@
++#region Copyright & License Information
++/* Copyright (c) The OpenRA Developers and Contributors.
++ * GPL-3.0-or-later; see COPYING. */
++#endregion
++
++using System;
++using System.Collections.Concurrent;
++using System.IO;
++using System.Threading;
++
++namespace OpenRA.Network
++{
++	// Carries the normal wire protocol between a local server and its sole client.
++	// No sockets, DNS, ports, polling or platform-specific native APIs are needed.
++	internal sealed class LocalTransport : IDisposable
++	{
++		readonly BlockingCollection<byte[]> toServer = new();
++		readonly BlockingCollection<byte[]> toClient = new();
++		byte[] serverPending;
++		int serverOffset;
++		int closed;
++
++		internal Stream ClientStream { get; }
++
++		internal LocalTransport()
++		{
++			ClientStream = new ClientSideStream(this);
++		}
++
++		static bool Send(BlockingCollection<byte[]> queue, byte[] data, int offset, int count)
++		{
++			if (count == 0)
++				return true;
++			var copy = new byte[count];
++			Buffer.BlockCopy(data, offset, copy, 0, count);
++			try { queue.Add(copy); return true; }
++			catch (InvalidOperationException) { return false; }
++		}
++
++		// -1 means timeout, 0 means EOF. A positive read may be shorter than a packet.
++		internal int Receive(byte[] buffer, int timeout)
++		{
++			if (serverPending == null)
++			{
++				if (!toServer.TryTake(out serverPending, timeout))
++					return toServer.IsCompleted ? 0 : -1;
++				serverOffset = 0;
++			}
++
++			var count = Math.Min(buffer.Length, serverPending.Length - serverOffset);
++			Buffer.BlockCopy(serverPending, serverOffset, buffer, 0, count);
++			serverOffset += count;
++			if (serverOffset == serverPending.Length)
++				serverPending = null;
++			return count;
++		}
++
++		internal bool SendToClient(byte[] data) => Send(toClient, data, 0, data.Length);
++
++		public void Dispose()
++		{
++			if (Interlocked.Exchange(ref closed, 1) != 0)
++				return;
++			// Do not dispose collections while the other thread may be reading.
++			// Completing both queues wakes blocked readers and preserves queued bytes.
++			toServer.CompleteAdding();
++			toClient.CompleteAdding();
++		}
++
++		sealed class ClientSideStream : Stream
++		{
++			readonly LocalTransport owner;
++			byte[] pending;
++			int position;
++			internal ClientSideStream(LocalTransport owner) { this.owner = owner; }
++			public override bool CanRead => true;
++			public override bool CanWrite => true;
++			public override bool CanSeek => false;
++			public override long Length => throw new NotSupportedException();
++			public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
++			public override void Flush() { }
++			public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
++			public override void SetLength(long value) => throw new NotSupportedException();
++
++			public override int Read(byte[] buffer, int offset, int count)
++			{
++				ArgumentNullException.ThrowIfNull(buffer);
++				if (offset < 0 || count < 0 || offset > buffer.Length - count)
++					throw new ArgumentOutOfRangeException(nameof(count));
++				if (count == 0)
++					return 0;
++				if (pending == null)
++				{
++					if (!owner.toClient.TryTake(out pending, Timeout.Infinite))
++						return 0;
++					position = 0;
++				}
++
++				var read = Math.Min(count, pending.Length - position);
++				Buffer.BlockCopy(pending, position, buffer, offset, read);
++				position += read;
++				if (position == pending.Length)
++					pending = null;
++				return read;
++			}
++
++			public override void Write(byte[] buffer, int offset, int count)
++			{
++				ArgumentNullException.ThrowIfNull(buffer);
++				if (offset < 0 || count < 0 || offset > buffer.Length - count)
++					throw new ArgumentOutOfRangeException(nameof(count));
++				if (!Send(owner.toServer, buffer, offset, count))
++					throw new IOException("The local server connection is closed.");
++			}
++
++			protected override void Dispose(bool disposing)
++			{
++				if (disposing)
++					owner.Dispose();
++				base.Dispose(disposing);
++			}
++		}
++	}
++}
+diff --git a/src/MapDirectoryTracker.cs b/src/MapDirectoryTracker.cs
+new file mode 100644
+index 0000000..fdadf41
+--- /dev/null
++++ b/src/MapDirectoryTracker.cs
+@@ -0,0 +1,135 @@
++#region Copyright & License Information
++/*
++ * Copyright (c) The OpenRA Developers and Contributors
++ * This file is part of OpenRA, which is free software. It is made
++ * available to you under the terms of the GNU General Public License
++ * as published by the Free Software Foundation, either version 3 of
++ * the License, or (at your option) any later version. For more
++ * information, see COPYING.
++ */
++#endregion
++
++using System;
++using System.Collections.Generic;
++using System.IO;
++using System.Linq;
++using OpenRA.FileSystem;
++
++namespace OpenRA
++{
++	public sealed class MapDirectoryTracker : IDisposable
++	{
++#if !SWITCH
++		readonly FileSystemWatcher watcher;
++#endif
++		readonly IReadOnlyPackage package;
++		readonly MapClassification classification;
++
++		enum MapAction { Add, Delete, Update }
++		readonly Dictionary<string, MapAction> mapActionQueue = [];
++
++		bool dirty = false;
++
++		public MapDirectoryTracker(IReadOnlyPackage package, MapClassification classification)
++		{
++			this.package = package;
++			this.classification = classification;
++
++#if !SWITCH
++			watcher = new FileSystemWatcher(package.Name);
++			watcher.Changed += (_, e) => AddMapAction(MapAction.Update, e.FullPath);
++			watcher.Created += (_, e) => AddMapAction(MapAction.Add, e.FullPath);
++			watcher.Deleted += (_, e) => AddMapAction(MapAction.Delete, e.FullPath);
++			watcher.Renamed += (_, e) => AddMapAction(MapAction.Add, e.FullPath, e.OldFullPath);
++
++			watcher.IncludeSubdirectories = true;
++			watcher.EnableRaisingEvents = true;
++#endif
++			// MapCache still enumerates and loads all map packages at startup.
++			// Only desktop hot-reload monitoring is unavailable on mono-nx.
++		}
++
++		public void Dispose()
++		{
++#if !SWITCH
++			watcher.Dispose();
++#endif
++		}
++
++		void AddMapAction(MapAction mapAction, string fullpath, string oldFullPath = null)
++		{
++			lock (mapActionQueue)
++			{
++				dirty = true;
++
++				// if path is not root, update map instead
++				var path = RemoveSubDirs(fullpath);
++				if (fullpath == path)
++					mapActionQueue[path] = mapAction;
++				else
++					mapActionQueue[path] = MapAction.Update;
++
++				// called when file has been renamed / changed location
++				if (oldFullPath != null)
++				{
++					var oldpath = RemoveSubDirs(oldFullPath);
++					if (oldpath != null)
++						if (oldFullPath == oldpath)
++							mapActionQueue[oldpath] = MapAction.Delete;
++						else
++							mapActionQueue[oldpath] = MapAction.Update;
++				}
++			}
++		}
++
++		public void UpdateMaps(MapCache mapcache)
++		{
++			lock (mapActionQueue)
++			{
++				if (!dirty)
++					return;
++
++				dirty = false;
++				foreach (var mapAction in mapActionQueue)
++				{
++					var map = mapcache.FirstOrDefault(x => x.Path == mapAction.Key && x.Status == MapStatus.Available);
++					if (map != null)
++					{
++						if (mapAction.Value == MapAction.Delete)
++						{
++							Console.WriteLine(mapAction.Key + " was deleted");
++							map.Invalidate();
++						}
++						else
++						{
++							Console.WriteLine(mapAction.Key + " was updated");
++							map.Invalidate();
++							mapcache.LoadMap(mapAction.Key.Replace(package.Name + Path.DirectorySeparatorChar, ""), package, classification, map.Uid);
++						}
++					}
++					else
++					{
++						if (mapAction.Value != MapAction.Delete)
++						{
++							Console.WriteLine(mapAction.Key + " was added");
++							mapcache.LoadMap(mapAction.Key.Replace(package?.Name + Path.DirectorySeparatorChar, ""), package, classification, null);
++						}
++					}
++				}
++
++				mapActionQueue.Clear();
++			}
++		}
++
++		string RemoveSubDirs(string path)
++		{
++			var endPath = path.Replace(package.Name + Path.DirectorySeparatorChar, "");
++
++			// if file moved from out outside directory, ignore it
++			if (path == endPath)
++				return null;
++
++			return package.Name + Path.DirectorySeparatorChar + endPath.Split(Path.DirectorySeparatorChar)[0];
++		}
++	}
++}
+diff --git a/src/Network-Connection.cs b/src/Network-Connection.cs
+index a70cc02..34a8794 100644
+--- a/src/Network-Connection.cs
++++ b/src/Network-Connection.cs
+@@ -107,6 +107,7 @@ namespace OpenRA.Network
+ 		readonly Queue<OrderPacket> sentImmediateOrders = [];
+ 		readonly ConcurrentQueue<(int FromClient, byte[] Data)> receivedPackets = [];
+ 		TcpClient tcp;
++		Stream localStream;
+ 		volatile ConnectionState connectionState = ConnectionState.Connecting;
+ 		volatile int clientId;
+ 		bool disposed;
+@@ -114,6 +115,14 @@ namespace OpenRA.Network
+ 		public NetworkConnection(ConnectionTarget target)
+ 		{
+ 			Target = target;
++			if (target.LocalServer != null)
++			{
++				localStream = target.LocalServer.OpenLocalConnection().ClientStream;
++				EndPoint = new IPEndPoint(IPAddress.Loopback, 0);
++				new Thread(NetworkConnectionReceive) { Name = "Local client receive", IsBackground = true }.Start();
++				return;
++			}
++
+ 			new Thread(NetworkConnectionConnect)
+ 			{
+ 				Name = $"{GetType().Name} (connect to {target})",
+@@ -202,7 +211,7 @@ namespace OpenRA.Network
+ 		{
+ 			try
+ 			{
+-				var stream = tcp.GetStream();
++				var stream = localStream ?? tcp.GetStream();
+ 				var handshakeProtocol = stream.ReadInt32();
+ 
+ 				if (handshakeProtocol != ProtocolVersion.Handshake)
+@@ -224,7 +233,7 @@ namespace OpenRA.Network
+ 			catch (Exception ex)
+ 			{
+ 				ErrorMessage = "Connection failed";
+-				Log.Write("client", $"Connection to {EndPoint} failed: {ex.Message}");
++				Log.Write("client", $"Connection to {EndPoint} failed: {ex}");
+ 			}
+ 			finally
+ 			{
+@@ -279,7 +288,7 @@ namespace OpenRA.Network
+ 				}
+ 
+ 				queuedSyncPackets.Clear();
+-				ms.WriteTo(tcp.GetStream());
++				ms.WriteTo(localStream ?? tcp.GetStream());
+ 			}
+ 			catch (SocketException) { /* drop this on the floor; we'll pick up the disconnect from the reader thread */ }
+ 			catch (ObjectDisposedException) { /* ditto */ }
+@@ -384,6 +393,7 @@ namespace OpenRA.Network
+ 
+ 			// Closing the stream will cause any reads on the receiving thread to throw.
+ 			// This will mark the connection as no longer connected and the thread will terminate cleanly.
++			localStream?.Dispose();
+ 			tcp?.Close();
+ 
+ 			Recorder?.Dispose();
+diff --git a/src/Platform.cs b/src/Platform.cs
+new file mode 100644
+index 0000000..dd4429f
+--- /dev/null
++++ b/src/Platform.cs
+@@ -0,0 +1,328 @@
++#region Copyright & License Information
++/*
++ * Copyright (c) The OpenRA Developers and Contributors
++ * This file is part of OpenRA, which is free software. It is made
++ * available to you under the terms of the GNU General Public License
++ * as published by the Free Software Foundation, either version 3 of
++ * the License, or (at your option) any later version. For more
++ * information, see COPYING.
++ */
++#endregion
++
++using System;
++using System.Diagnostics;
++using System.IO;
++using System.Runtime.InteropServices;
++
++namespace OpenRA
++{
++	public enum PlatformType { Unknown, Windows, OSX, Linux }
++
++	public enum SupportDirType { System, ModernUser, LegacyUser, User }
++
++	public static class Platform
++	{
++		public static PlatformType CurrentPlatform => LazyCurrentPlatform.Value;
++		public static Architecture CurrentArchitecture => RuntimeInformation.ProcessArchitecture;
++		public static readonly Guid SessionGUID = Guid.NewGuid();
++
++		static readonly Lazy<PlatformType> LazyCurrentPlatform = Exts.Lazy(GetCurrentPlatform);
++
++		static bool engineDirAccessed;
++		static string engineDir;
++
++		static bool supportDirInitialized;
++		static string systemSupportPath;
++		static string legacyUserSupportPath;
++		static string modernUserSupportPath;
++		static string userSupportPath;
++
++#if SWITCH
++		static PlatformType GetCurrentPlatform() => PlatformType.Linux;
++#else
++		static PlatformType GetCurrentPlatform()
++		{
++			if (Environment.OSVersion.Platform == PlatformID.Win32NT)
++				return PlatformType.Windows;
++
++			try
++			{
++				var psi = new ProcessStartInfo("uname", "-s")
++				{
++					UseShellExecute = false,
++					RedirectStandardOutput = true
++				};
++
++				var p = Process.Start(psi);
++				var kernelName = p.StandardOutput.ReadToEnd();
++				if (kernelName.Contains("Darwin"))
++					return PlatformType.OSX;
++
++				return PlatformType.Linux;
++			}
++			catch { }
++
++			return PlatformType.Unknown;
++		}
++
++#endif
++
++		public static string RuntimeVersion => $".NET CLR {Environment.Version}";
++
++#if SWITCH
++		public static string OperatingSystem => "Nintendo Switch";
++#else
++		public static string OperatingSystem
++		{
++			get
++			{
++				if (CurrentPlatform == PlatformType.Linux)
++				{
++					var desktopType = Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP");
++					var sessionType = Environment.GetEnvironmentVariable("XDG_SESSION_TYPE");
++
++					string suffix;
++					if (!string.IsNullOrEmpty(desktopType) && !string.IsNullOrEmpty(sessionType))
++						suffix = $" ({desktopType};{sessionType})";
++					else if (!string.IsNullOrEmpty(desktopType))
++						suffix = $" ({desktopType})";
++					else if (!string.IsNullOrEmpty(sessionType))
++						suffix = $" ({sessionType})";
++					else
++						suffix = "";
++
++					try
++					{
++						var psi = new ProcessStartInfo("hostnamectl", "status")
++						{
++							UseShellExecute = false,
++							RedirectStandardOutput = true
++						};
++
++						var p = Process.Start(psi);
++						string line;
++						while ((line = p.StandardOutput.ReadLine()) != null)
++							if (line.StartsWith("Operating System: ", StringComparison.Ordinal))
++								return line[18..] + suffix;
++					}
++					catch { }
++
++					if (File.Exists("/etc/os-release"))
++						foreach (var line in File.ReadLines("/etc/os-release"))
++							if (line.StartsWith("PRETTY_NAME=", StringComparison.Ordinal))
++								return line[13..^1] + suffix;
++				}
++				else if (CurrentPlatform == PlatformType.OSX)
++				{
++					try
++					{
++						var psi = new ProcessStartInfo("system_profiler", "SPSoftwareDataType")
++						{
++							UseShellExecute = false,
++							RedirectStandardOutput = true
++						};
++
++						var p = Process.Start(psi);
++						string line;
++						while ((line = p.StandardOutput.ReadLine()) != null)
++						{
++							line = line.Trim();
++							if (line.StartsWith("System Version: ", StringComparison.Ordinal))
++								return line[16..];
++						}
++					}
++					catch { }
++				}
++
++				return Environment.OSVersion.ToString();
++			}
++		}
++
++#endif
++
++		/// <summary>
++		/// Directory containing user-specific support files (settings, maps, replays, game data, etc).
++		/// </summary>
++		public static string SupportDir => GetSupportDir(SupportDirType.User);
++
++		public static string GetSupportDir(SupportDirType type)
++		{
++			if (!supportDirInitialized)
++				InitializeSupportDir();
++
++			switch (type)
++			{
++				case SupportDirType.System: return systemSupportPath;
++				case SupportDirType.LegacyUser: return legacyUserSupportPath;
++				case SupportDirType.ModernUser: return modernUserSupportPath;
++				default: return userSupportPath;
++			}
++		}
++
++		static void InitializeSupportDir()
++		{
++			// The preferred support dir location for Windows and Linux was changed in mid 2019 to match modern platform conventions
++			switch (CurrentPlatform)
++			{
++				case PlatformType.Windows:
++				{
++					modernUserSupportPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenRA") + Path.DirectorySeparatorChar;
++					legacyUserSupportPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Personal), "OpenRA") + Path.DirectorySeparatorChar;
++					systemSupportPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "OpenRA") + Path.DirectorySeparatorChar;
++					break;
++				}
++
++				case PlatformType.OSX:
++				{
++					modernUserSupportPath = legacyUserSupportPath = Path.Combine(
++						Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
++						"Library", "Application Support", "OpenRA") + Path.DirectorySeparatorChar;
++
++					systemSupportPath = "/Library/Application Support/OpenRA/";
++					break;
++				}
++
++				case PlatformType.Linux:
++				{
++#if SWITCH
++					legacyUserSupportPath = modernUserSupportPath = systemSupportPath =
++						Path.Combine(EngineDir, "Support") + Path.DirectorySeparatorChar;
++#else
++					legacyUserSupportPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".openra") + Path.DirectorySeparatorChar;
++
++					var xdgConfigHome = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
++					if (string.IsNullOrEmpty(xdgConfigHome))
++						xdgConfigHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config") + Path.DirectorySeparatorChar;
++
++					modernUserSupportPath = Path.Combine(xdgConfigHome, "openra") + Path.DirectorySeparatorChar;
++					systemSupportPath = "/var/games/openra/";
++
++#endif
++					break;
++				}
++
++				default:
++				{
++					modernUserSupportPath = legacyUserSupportPath =
++						Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".openra") + Path.DirectorySeparatorChar;
++					systemSupportPath = "/var/games/openra/";
++					break;
++				}
++			}
++
++			// Use a local directory in the game root if it exists (shared with the system support dir)
++			var localSupportDir = Path.Combine(EngineDir, "Support") + Path.DirectorySeparatorChar;
++			if (Directory.Exists(localSupportDir))
++				userSupportPath = systemSupportPath = localSupportDir;
++
++			// Use the fallback directory if it exists and the preferred one does not
++			else if (!Directory.Exists(modernUserSupportPath) && Directory.Exists(legacyUserSupportPath))
++				userSupportPath = legacyUserSupportPath;
++			else
++				userSupportPath = modernUserSupportPath;
++
++			supportDirInitialized = true;
++		}
++
++		/// <summary>
++		/// Specify a custom support directory that already exists on the filesystem.
++		/// Cannot be called after Platform.SupportDir / GetSupportDir have been accessed.
++		/// </summary>
++		public static void OverrideSupportDir(string path)
++		{
++			if (supportDirInitialized)
++				throw new InvalidOperationException("Attempted to override user support directory after it has already been accessed.");
++
++			if (!Directory.Exists(path))
++				throw new DirectoryNotFoundException(path);
++
++			// Ensure that userSupportPath is an absolute path
++			path = Path.GetFullPath(path);
++
++			if (!path.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) &&
++					!path.EndsWith(Path.AltDirectorySeparatorChar.ToString(), StringComparison.Ordinal))
++				path += Path.DirectorySeparatorChar;
++
++			InitializeSupportDir();
++			userSupportPath = path;
++		}
++
++		public static string EngineDir
++		{
++			get
++			{
++				// Engine directory defaults to the location of the binaries,
++				// unless OverrideGameDir is called during startup.
++				if (!engineDirAccessed)
++					engineDir = BinDir;
++
++				engineDirAccessed = true;
++				return engineDir;
++			}
++		}
++
++		/// <summary>
++		/// Specify a custom engine directory that already exists on the filesystem.
++		/// Cannot be called after Platform.EngineDir has been accessed.
++		/// </summary>
++		public static void OverrideEngineDir(string path)
++		{
++			if (engineDirAccessed)
++				throw new InvalidOperationException("Attempted to override engine directory after it has already been accessed.");
++
++			// Note: Relative paths are interpreted as being relative to BinDir, not the current working dir.
++			if (!Path.IsPathRooted(path))
++				path = Path.Combine(BinDir, path);
++
++			if (!Directory.Exists(path))
++				throw new DirectoryNotFoundException(path);
++
++			if (!path.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) &&
++				!path.EndsWith(Path.AltDirectorySeparatorChar.ToString(), StringComparison.Ordinal))
++				path += Path.DirectorySeparatorChar;
++
++			engineDirAccessed = true;
++			engineDir = path;
++		}
++
++		public static string BinDir
++		{
++			get
++			{
++				var dir = AppDomain.CurrentDomain.BaseDirectory;
++
++				// Add trailing DirectorySeparator for some buggy AppPool hosts
++				if (!dir.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
++					dir += Path.DirectorySeparatorChar;
++
++				return dir;
++			}
++		}
++
++		/// <summary>Replaces special character prefixes with full paths.</summary>
++		public static string ResolvePath(string path)
++		{
++			path = path.TrimEnd(' ', '\t');
++
++			if (path == "^SupportDir")
++				return SupportDir;
++
++			if (path == "^EngineDir")
++				return EngineDir;
++
++			if (path == "^BinDir")
++				return BinDir;
++
++			if (path.StartsWith("^SupportDir|", StringComparison.Ordinal))
++				path = SupportDir + path[12..];
++
++			if (path.StartsWith("^EngineDir|", StringComparison.Ordinal))
++				path = EngineDir + path[11..];
++
++			if (path.StartsWith("^BinDir|", StringComparison.Ordinal))
++				path = BinDir + path[8..];
++
++			return path;
++		}
++	}
++}
+diff --git a/src/Server-Connection.cs b/src/Server-Connection.cs
+index d3b5c10..0d046a6 100644
+--- a/src/Server-Connection.cs
++++ b/src/Server-Connection.cs
+@@ -18,6 +18,7 @@ using System.Linq;
+ using System.Net;
+ using System.Net.Sockets;
+ using System.Threading;
++using OpenRA.Network;
+ 
+ namespace OpenRA.Server
+ {
+@@ -41,7 +42,17 @@ namespace OpenRA.Server
+ 
+ 		long lastReceivedTime = 0;
+ 
++		readonly LocalTransport localTransport;
+ 		readonly BlockingCollection<byte[]> sendQueue = [];
++
++		internal Connection(Server server, LocalTransport transport, string authToken)
++		{
++			PlayerIndex = server.ChooseFreePlayerIndex();
++			AuthToken = authToken;
++			EndPoint = new IPEndPoint(IPAddress.Loopback, 0);
++			localTransport = transport;
++			new Thread(SendReceiveLoop) { Name = "Local server communication", IsBackground = true }.Start((server, (Socket)null));
++		}
+ 		readonly Queue<int> pingHistory = [];
+ 
+ 		public Connection(Server server, Socket socket, string authToken)
+@@ -77,8 +88,11 @@ namespace OpenRA.Server
+ 			// Keep the socket fully blocking: poll() with a 100ms timeout still yields
+ 			// a responsive read loop, and single-player traffic is small.
+ #else
+-			socket.Blocking = false;
+-			socket.NoDelay = true;
++			if (socket != null)
++			{
++				socket.Blocking = false;
++				socket.NoDelay = true;
++			}
+ #endif
+ 
+ 			var receiveBuffer = new byte[1024];
+@@ -93,9 +107,9 @@ namespace OpenRA.Server
+ 				while (true)
+ 				{
+ 					// Wait up to 100ms for data to arrive before checking for data to send
+-					if (socket.Poll(100000, SelectMode.SelectRead))
++					if (localTransport != null || socket.Poll(100000, SelectMode.SelectRead))
+ 					{
+-						var read = socket.Receive(receiveBuffer);
++						var read = localTransport != null ? localTransport.Receive(receiveBuffer, 100) : socket.Receive(receiveBuffer);
+ 						if (read == 0)
+ 						{
+ 							// Empty packet signals that the client has been dropped
+@@ -166,6 +180,12 @@ namespace OpenRA.Server
+ 					// Send all data immediately, we will block again on read
+ 					while (sendQueue.TryTake(out var data, 0))
+ 					{
++						if (localTransport != null)
++						{
++							if (!localTransport.SendToClient(data))
++								return;
++							continue;
++						}
+ 						var start = 0;
+ 						var length = data.Length;
+ 
+@@ -208,7 +228,8 @@ namespace OpenRA.Server
+ 			finally
+ 			{
+ 				server.OnConnectionDisconnect(this);
+-				socket.Dispose();
++				localTransport?.Dispose();
++				socket?.Dispose();
+ 			}
+ 		}
+ 
+diff --git a/src/Server.cs b/src/Server.cs
+new file mode 100644
+index 0000000..a0f527b
+--- /dev/null
++++ b/src/Server.cs
+@@ -0,0 +1,1628 @@
++#region Copyright & License Information
++/*
++ * Copyright (c) The OpenRA Developers and Contributors
++ * This file is part of OpenRA, which is free software. It is made
++ * available to you under the terms of the GNU General Public License
++ * as published by the Free Software Foundation, either version 3 of
++ * the License, or (at your option) any later version. For more
++ * information, see COPYING.
++ */
++#endregion
++
++using System;
++using System.Collections.Concurrent;
++using System.Collections.Frozen;
++using System.Collections.Generic;
++using System.Diagnostics;
++using System.Globalization;
++using System.IO;
++using System.Linq;
++using System.Net;
++using System.Net.Sockets;
++using System.Text;
++using System.Threading;
++using System.Threading.Tasks;
++using OpenRA.FileFormats;
++using OpenRA.Network;
++using OpenRA.Primitives;
++using OpenRA.Support;
++using OpenRA.Traits;
++
++namespace OpenRA.Server
++{
++	public enum ServerState
++	{
++		WaitingPlayers = 1,
++		GameStarted = 2,
++		ShuttingDown = 3
++	}
++
++	public enum ServerType
++	{
++		Local = 0,
++		Skirmish = 1,
++		Multiplayer = 2,
++		Dedicated = 3
++	}
++
++	[IncludeStaticFluentReferences(typeof(PlayerMessageTracker), typeof(VoteKickTracker))]
++	public sealed class Server
++	{
++		[FluentReference]
++		const string CustomRules = "notification-custom-rules";
++
++		[FluentReference]
++		const string TwoHumansRequired = "notification-two-humans-required";
++
++		[FluentReference]
++		const string ErrorGameStarted = "notification-error-game-started";
++
++		[FluentReference]
++		const string RequiresPassword = "notification-requires-password";
++
++		[FluentReference]
++		const string IncorrectPassword = "notification-incorrect-password";
++
++		[FluentReference]
++		const string IncompatibleMod = "notification-incompatible-mod";
++
++		[FluentReference]
++		const string IncompatibleVersion = "notification-incompatible-version";
++
++		[FluentReference]
++		const string IncompatibleProtocol = "notification-incompatible-protocol";
++
++		[FluentReference]
++		const string Banned = "notification-you-were-banned";
++
++		[FluentReference]
++		const string TempBanned = "notification-you-were-temp-banned";
++
++		[FluentReference]
++		const string Full = "notification-game-full";
++
++		[FluentReference("player")]
++		const string Joined = "notification-joined";
++
++		[FluentReference]
++		const string RequiresAuthentication = "notification-requires-authentication";
++
++		[FluentReference]
++		const string NoPermission = "notification-no-permission-to-join";
++
++		[FluentReference("command")]
++		const string UnknownServerCommand = "notification-unknown-server-command";
++
++		[FluentReference("player")]
++		const string LobbyDisconnected = "notification-lobby-disconnected";
++
++		[FluentReference("player")]
++		const string PlayerDisconnected = "notification-player-disconnected";
++
++		[FluentReference("player", "team")]
++		const string PlayerTeamDisconnected = "notification-team-player-disconnected";
++
++		[FluentReference("player")]
++		const string ObserverDisconnected = "notification-observer-disconnected";
++
++		[FluentReference("player")]
++		const string NewAdmin = "notification-new-admin";
++
++		[FluentReference]
++		const string YouWereKicked = "notification-you-were-kicked";
++
++		[FluentReference]
++		const string GameStarted = "notification-game-started";
++
++		public readonly MersenneTwister Random = new();
++		public readonly ServerType Type;
++		public bool IsMultiplayer => Type == ServerType.Dedicated || Type == ServerType.Multiplayer;
++
++		public readonly List<Connection> Conns = [];
++
++		public Session LobbyInfo;
++		public ServerSettings Settings;
++		public ModData ModData;
++		public List<string> TempBans = [];
++		public string GeneratedMapData;
++
++		// Managed by LobbyCommands
++		public MapPreview Map;
++		public readonly MapStatusCache MapStatusCache;
++		public GameSave GameSave;
++		public FrozenSet<string> MapPool;
++
++		// Default to the next frame for ServerType.Local - MP servers take the value from the selected GameSpeed.
++		public int OrderLatency = 1;
++
++		readonly int randomSeed;
++		readonly List<TcpListener> listeners = [];
++		readonly bool useLocalTransport;
++		readonly TypeDictionary serverTraits = [];
++		readonly PlayerDatabase playerDatabase;
++
++		OrderBuffer orderBuffer;
++
++		volatile ServerState internalState = ServerState.WaitingPlayers;
++
++		readonly BlockingCollection<IServerEvent> events = [];
++
++		ReplayRecorder recorder;
++		GameInformation gameInfo;
++		readonly List<GameInformation.Player> worldPlayers = [];
++		readonly Stopwatch pingUpdated = Stopwatch.StartNew();
++
++		public readonly VoteKickTracker VoteKickTracker;
++		readonly PlayerMessageTracker playerMessageTracker;
++
++		public ServerState State
++		{
++			get => internalState;
++			set => internalState = value;
++		}
++
++		public static void SyncClientToPlayerReference(Session.Client c, PlayerReference pr)
++		{
++			if (pr == null)
++				return;
++
++			if (pr.LockFaction)
++				c.Faction = pr.Faction;
++			if (pr.LockSpawn)
++				c.SpawnPoint = pr.Spawn;
++			if (pr.LockTeam)
++				c.Team = pr.Team;
++			if (pr.LockHandicap)
++				c.Handicap = pr.Handicap;
++
++			c.Color = pr.LockColor ? pr.Color : c.PreferredColor;
++		}
++
++		public void Shutdown()
++		{
++			State = ServerState.ShuttingDown;
++		}
++
++		public void EndGame()
++		{
++			foreach (var t in serverTraits.WithInterface<IEndGame>())
++				t.GameEnded(this);
++
++			recorder?.Dispose();
++			recorder = null;
++		}
++
++		// Craft a fake handshake request/response because that's the
++		// only way to expose the Version and OrdersProtocol.
++		public void RecordFakeHandshake()
++		{
++			var request = new HandshakeRequest
++			{
++				Mod = ModData.Manifest.Id,
++				Version = ModData.Manifest.Metadata.Version,
++			};
++
++			recorder.ReceiveFrame(0, 0, new Order("HandshakeRequest", null, false)
++			{
++				Type = OrderType.Handshake,
++				IsImmediate = true,
++				TargetString = request.Serialize(),
++			}.Serialize());
++
++			var response = new HandshakeResponse()
++			{
++				Mod = ModData.Manifest.Id,
++				Version = ModData.Manifest.Metadata.Version,
++				OrdersProtocol = ProtocolVersion.Orders,
++				Client = new Session.Client(),
++			};
++
++			recorder.ReceiveFrame(0, 0, new Order("HandshakeResponse", null, false)
++			{
++				Type = OrderType.Handshake,
++				IsImmediate = true,
++				TargetString = response.Serialize(),
++			}.Serialize());
++		}
++
++		void MapStatusChanged(string uid, Session.MapStatus status)
++		{
++			lock (LobbyInfo)
++			{
++				if (LobbyInfo.GlobalSettings.Map == uid)
++					LobbyInfo.GlobalSettings.MapStatus = status;
++
++				SyncLobbyInfo();
++			}
++		}
++
++		public Server(List<IPEndPoint> endpoints, ServerSettings settings, ModData modData, ServerType type)
++			: this(endpoints, settings, modData, type, false) { }
++
++		public Server(List<IPEndPoint> endpoints, ServerSettings settings, ModData modData, ServerType type, bool useLocalTransport)
++		{
++			if (useLocalTransport && type != ServerType.Local && type != ServerType.Skirmish)
++				throw new ArgumentException("In-process transport is only for single-player servers.");
++			this.useLocalTransport = useLocalTransport;
++			Log.AddChannel("server", "server.log", true);
++
++			SocketException lastException = null;
++			foreach (var endpoint in useLocalTransport ? new List<IPEndPoint>() : endpoints)
++			{
++				var listener = new TcpListener(endpoint);
++				try
++				{
++					try
++					{
++						listener.Server.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only, 1);
++					}
++					catch (Exception ex) when (ex is SocketException || ex is ArgumentException)
++					{
++						Log.Write("server", $"Failed to set socket option on {endpoint}: {ex.Message}");
++					}
++
++					listener.Start();
++					listeners.Add(listener);
++
++					new Thread(() =>
++					{
++						while (true)
++						{
++							if (State != ServerState.WaitingPlayers)
++							{
++								listener.Stop();
++								return;
++							}
++
++							// Use a 1s timeout so we can stop listening once the game starts
++							if (listener.Server.Poll(1000000, SelectMode.SelectRead))
++							{
++								try
++								{
++									events.Add(new ConnectionConnectEvent(listener.AcceptSocket()));
++								}
++								catch (Exception)
++								{
++									// Ignore the exception that may be generated if the connection
++									// drops while we are trying to connect
++								}
++							}
++						}
++					})
++					{ Name = $"Connection listener ({listener.LocalEndpoint})", IsBackground = true }.Start();
++				}
++				catch (SocketException ex)
++				{
++					lastException = ex;
++					Log.Write("server", $"Failed to listen on {endpoint}: {ex.Message}");
++				}
++			}
++
++			if (listeners.Count == 0 && !useLocalTransport)
++				throw lastException;
++
++			Type = type;
++			Settings = settings;
++
++			Settings.Name = Game.Settings.SanitizedServerName(Settings.Name);
++
++			ModData = modData;
++
++			playerDatabase = modData.GetOrCreate<PlayerDatabase>();
++
++			randomSeed = (int)DateTime.Now.ToBinary();
++
++			if (IsMultiplayer && settings.EnableGeoIP)
++				GeoIP.Initialize();
++
++			if (IsMultiplayer)
++				Nat.TryForwardPort(Settings.ListenPort, Settings.ListenPort);
++
++			foreach (var trait in modData.Manifest.ServerTraits)
++				serverTraits.Add(modData.ObjectCreator.CreateObject<ServerTrait>(trait));
++
++			serverTraits.TrimExcess();
++
++			MapStatusCache = new MapStatusCache(modData, MapStatusChanged, type == ServerType.Dedicated && settings.EnableLintChecks);
++
++			playerMessageTracker = new PlayerMessageTracker(this, DispatchOrdersToClient, SendFluentMessageTo);
++			VoteKickTracker = new VoteKickTracker(this);
++
++			LobbyInfo = new Session
++			{
++				GlobalSettings =
++				{
++					RandomSeed = randomSeed,
++					ServerName = settings.Name,
++					EnableSingleplayer = settings.EnableSingleplayer || Type != ServerType.Dedicated,
++					EnableMapGeneration = settings.EnableMapGeneration,
++					EnableSyncReports = settings.EnableSyncReports,
++					GameUid = Guid.NewGuid().ToString(),
++					Dedicated = Type == ServerType.Dedicated
++				}
++			};
++
++			if (Settings.RecordReplays && Type == ServerType.Dedicated)
++			{
++				recorder = new ReplayRecorder(() => Game.TimestampedFilename(extra: "-Server"));
++
++				// We only need one handshake to initialize the replay.
++				// Add it now, then ignore the redundant handshakes from each client
++				RecordFakeHandshake();
++			}
++
++			new Thread(_ =>
++			{
++				// Note: at least one of these is required to set the initial LobbyInfo.Map and MapStatus
++				foreach (var t in serverTraits.WithInterface<INotifyServerStart>())
++					t.ServerStarted(this);
++
++				Log.Write("server", $"Initial mod: {ModData.Manifest.Id}");
++				Log.Write("server", $"Initial map: {LobbyInfo.GlobalSettings.Map}");
++
++				while (true)
++				{
++					if (State != ServerState.ShuttingDown)
++					{
++						if (events.TryTake(out var e, 1000))
++							e.Invoke(this);
++
++						// PERF: Dedicated servers need to drain the action queue to remove references blocking the GC from cleaning up disposed objects.
++						if (Type == ServerType.Dedicated)
++							Game.PerformDelayedActions();
++
++						foreach (var t in serverTraits.WithInterface<ITick>())
++							t.Tick(this);
++
++						if (State == ServerState.GameStarted)
++						{
++							foreach (var (playerIndex, scale) in orderBuffer.GetTickScales())
++							{
++								var frame = CreateTickScaleFrame(scale);
++								var con = Conns.SingleOrDefault(c => c.PlayerIndex == playerIndex);
++
++								if (con != null && con.Validated)
++									DispatchFrameToClient(con, playerIndex, frame);
++							}
++						}
++					}
++
++					if (State == ServerState.ShuttingDown)
++					{
++						EndGame();
++						if (IsMultiplayer)
++							Nat.TryRemovePortForward();
++						break;
++					}
++				}
++
++				foreach (var t in serverTraits.WithInterface<INotifyServerShutdown>())
++					t.ServerShutdown(this);
++
++				// Make sure to immediately close connections after the server is shutdown, we don't want to keep clients waiting
++				foreach (var c in Conns)
++					c.Dispose();
++
++				Conns.Clear();
++			})
++			{ IsBackground = true, Name = "ServerThread" }.Start();
++		}
++
++		int nextPlayerIndex;
++		public int ChooseFreePlayerIndex()
++		{
++			return nextPlayerIndex++;
++		}
++
++		internal void OnConnectionPacket(Connection conn, int frame, byte[] data)
++		{
++			events.Add(new ConnectionPacketEvent(conn, frame, data));
++		}
++
++		internal void OnConnectionPing(Connection conn, int[] pingHistory, byte queueLength)
++		{
++			events.Add(new ConnectionPingEvent(conn, pingHistory, queueLength));
++		}
++
++		internal void OnConnectionDisconnect(Connection conn)
++		{
++			events.Add(new ConnectionDisconnectEvent(conn));
++		}
++
++		internal LocalTransport OpenLocalConnection()
++		{
++			if (!useLocalTransport)
++				throw new InvalidOperationException("Not an in-process server.");
++			var transport = new LocalTransport();
++			if (State != ServerState.WaitingPlayers)
++			{
++				transport.Dispose();
++				return transport;
++			}
++			events.Add(new LocalConnectionConnectEvent(transport));
++			return transport;
++		}
++
++		void AcceptConnection(Socket socket, LocalTransport transport = null)
++		{
++			if (State != ServerState.WaitingPlayers)
++			{
++				transport?.Dispose();
++				socket?.Dispose();
++				return;
++			}
++
++			// Validate player identity by asking them to sign a random blob of data
++			// which we can then verify against the player public key database
++			var token = Convert.ToBase64String(OpenRA.Exts.MakeArray(256, _ => (byte)Random.Next()));
++
++			var newConn = transport != null ? new Connection(this, transport, token) : new Connection(this, socket, token);
++			if (transport != null)
++				Log.Write("server", "Accepting single-player client using in-process transport (no sockets).");
++			try
++			{
++				// Send handshake and client index.
++				var ms = new MemoryStream(8);
++				ms.Write(ProtocolVersion.Handshake);
++				ms.Write(newConn.PlayerIndex);
++				newConn.TrySendData(ms.ToArray());
++
++				// Dispatch a handshake order
++				var request = new HandshakeRequest
++				{
++					Mod = ModData.Manifest.Id,
++					Version = ModData.Manifest.Metadata.Version,
++					AuthToken = token
++				};
++
++				DispatchOrdersToClient(newConn, 0, 0, new Order("HandshakeRequest", null, false)
++				{
++					Type = OrderType.Handshake,
++					IsImmediate = true,
++					TargetString = request.Serialize()
++				}.Serialize());
++			}
++			catch (Exception e)
++			{
++				Log.Write("server", $"Handshake for client {newConn.EndPoint} failed: {e}");
++			}
++
++			Conns.Add(newConn);
++		}
++
++		void ValidateClient(Connection newConn, string data, string name)
++		{
++			try
++			{
++				if (State == ServerState.GameStarted)
++				{
++					Log.Write("server", $"Rejected connection from {newConn.EndPoint}; game is already started.");
++
++					SendOrderTo(newConn, "ServerError", ErrorGameStarted);
++					DropClient(newConn);
++					return;
++				}
++
++				var handshake = HandshakeResponse.Deserialize(data, name);
++
++				if (!string.IsNullOrEmpty(Settings.Password) && handshake.Password != Settings.Password)
++				{
++					var message = string.IsNullOrEmpty(handshake.Password) ? RequiresPassword : IncorrectPassword;
++					SendOrderTo(newConn, "AuthenticationError", message);
++					DropClient(newConn);
++					return;
++				}
++
++				var ipAddress = ((IPEndPoint)newConn.EndPoint).Address;
++				var client = new Session.Client
++				{
++					Name = OpenRA.Settings.SanitizedPlayerName(handshake.Client.Name),
++					IPAddress = ipAddress.ToString(),
++					AnonymizedIPAddress = IsMultiplayer && Settings.ShareAnonymizedIPs ? Session.AnonymizeIP(ipAddress) : null,
++					Location = GeoIP.LookupCountry(ipAddress),
++					Index = newConn.PlayerIndex,
++					PreferredColor = handshake.Client.PreferredColor,
++					Color = handshake.Client.Color,
++					Faction = "Random",
++					SpawnPoint = 0,
++					Team = 0,
++					Handicap = 0,
++					State = Session.ClientState.Invalid,
++				};
++
++				if (ModData.Manifest.Id != handshake.Mod)
++				{
++					Log.Write("server", $"Rejected connection from {newConn.EndPoint}; mods do not match.");
++
++					SendOrderTo(newConn, "ServerError", IncompatibleMod);
++					DropClient(newConn);
++					return;
++				}
++
++				if (ModData.Manifest.Metadata.Version != handshake.Version)
++				{
++					Log.Write("server", $"Rejected connection from {newConn.EndPoint}; Not running the same version.");
++
++					SendOrderTo(newConn, "ServerError", IncompatibleVersion);
++					DropClient(newConn);
++					return;
++				}
++
++				if (handshake.OrdersProtocol != ProtocolVersion.Orders)
++				{
++					Log.Write("server", $"Rejected connection from {newConn.EndPoint}; incompatible Orders protocol version {handshake.OrdersProtocol}.");
++
++					SendOrderTo(newConn, "ServerError", IncompatibleProtocol);
++					DropClient(newConn);
++					return;
++				}
++
++				// Check if IP is banned
++				var bans = Settings.Ban.Union(TempBans);
++				if (bans.Contains(client.IPAddress))
++				{
++					Log.Write("server", $"Rejected connection from {newConn.EndPoint}; Banned.");
++					var message = Settings.Ban.Contains(client.IPAddress) ? Banned : TempBanned;
++					SendOrderTo(newConn, "ServerError", message);
++					DropClient(newConn);
++					return;
++				}
++
++				void CompleteConnection()
++				{
++					lock (LobbyInfo)
++					{
++						client.Slot = LobbyInfo.FirstEmptySlot();
++						client.IsAdmin = !LobbyInfo.Clients.Any(c => c.IsAdmin);
++
++						if (client.IsObserver && !LobbyInfo.GlobalSettings.AllowSpectators)
++						{
++							SendOrderTo(newConn, "ServerError", Full);
++							DropClient(newConn);
++							return;
++						}
++
++						if (client.Slot != null)
++							SyncClientToPlayerReference(client, Map.Players.Players[client.Slot]);
++						else
++							client.Color = Color.White;
++
++						// Promote connection to a valid client
++						LobbyInfo.Clients.Add(client);
++						newConn.Validated = true;
++
++						// Disable chat UI to stop the client sending messages that we know we will reject
++						if (!client.IsAdmin && Settings.FloodLimitJoinCooldown > 0)
++							playerMessageTracker.DisableChatUI(newConn, Settings.FloodLimitJoinCooldown);
++
++						Log.Write("server", $"Client {newConn.PlayerIndex}: Accepted connection from {newConn.EndPoint}.");
++
++						if (client.Fingerprint != null)
++							Log.Write("server", $"Client {newConn.PlayerIndex}: Player fingerprint is {client.Fingerprint}.");
++
++						foreach (var t in serverTraits.WithInterface<IClientJoined>())
++							t.ClientJoined(this, newConn);
++
++						var p = ModData.MapCache[LobbyInfo.GlobalSettings.Map];
++						if (p.Class == MapClassification.Generated && !string.IsNullOrEmpty(GeneratedMapData))
++							SendOrderTo(newConn, "GenerateMap", GeneratedMapData);
++
++						SyncLobbyInfo();
++
++						Log.Write("server", $"{client.Name} ({newConn.EndPoint}) has joined the game.");
++
++						var otherConns = Conns.Where(c => c != newConn).ToArray();
++						SendFluentMessage(otherConns.AsSpan(), Joined, "player", client.Name);
++
++						if (Type == ServerType.Dedicated)
++						{
++							var motdFile = Path.Combine(Platform.SupportDir, "motd.txt");
++							if (!File.Exists(motdFile))
++								File.WriteAllText(motdFile, "Welcome, have fun and good luck!");
++
++							var motd = File.ReadAllText(motdFile);
++							if (!string.IsNullOrEmpty(motd))
++								SendOrderTo(newConn, "Message", motd);
++
++							if (!LobbyInfo.GlobalSettings.EnableSingleplayer)
++								SendFluentMessageTo(newConn, TwoHumansRequired);
++						}
++
++						if (Type != ServerType.Local && (LobbyInfo.GlobalSettings.MapStatus & Session.MapStatus.UnsafeCustomRules) != 0)
++							SendFluentMessageTo(newConn, CustomRules);
++					}
++				}
++
++				if (!IsMultiplayer)
++				{
++					// Local servers can only be joined by the local client, so we can trust their identity without validation
++					client.Fingerprint = handshake.Fingerprint;
++					CompleteConnection();
++				}
++				else if (!string.IsNullOrEmpty(handshake.Fingerprint) && !string.IsNullOrEmpty(handshake.AuthSignature))
++				{
++					Task.Run(async () =>
++					{
++						PlayerProfile profile = null;
++
++						try
++						{
++							var httpClient = HttpClientFactory.Create();
++							var url = playerDatabase.Profile + handshake.Fingerprint;
++							var httpResponseMessage = await httpClient.GetAsync(url);
++							var result = await httpResponseMessage.Content.ReadAsStreamAsync();
++
++							var yaml = MiniYaml.FromStream(result, url).First();
++							if (yaml.Key == "Player")
++							{
++								profile = FieldLoader.Load<PlayerProfile>(yaml.Value);
++
++								var publicKey = Encoding.ASCII.GetString(Convert.FromBase64String(profile.PublicKey));
++								var parameters = CryptoUtil.DecodePEMPublicKey(publicKey);
++								if (!profile.KeyRevoked && CryptoUtil.VerifySignature(parameters, newConn.AuthToken, handshake.AuthSignature))
++								{
++									client.Fingerprint = handshake.Fingerprint;
++									Log.Write("server", $"{newConn.EndPoint} authenticated as {profile.ProfileName} (UID {profile.ProfileID})");
++								}
++								else if (profile.KeyRevoked)
++								{
++									profile = null;
++									Log.Write("server", $"{newConn.EndPoint} failed to authenticate as {handshake.Fingerprint} (key revoked)");
++								}
++								else
++								{
++									profile = null;
++									Log.Write("server", $"{newConn.EndPoint} failed to authenticate as {handshake.Fingerprint} (signature verification failed)");
++								}
++							}
++							else
++								Log.Write("server", $"{newConn.EndPoint} failed to authenticate as {handshake.Fingerprint} (invalid server response: `{yaml.Key}` is not `Player`)");
++						}
++						catch (Exception ex)
++						{
++							Log.Write("server", $"{newConn.EndPoint} failed to authenticate as {handshake.Fingerprint} (exception occurred)");
++							Log.Write("server", ex.ToString());
++						}
++
++						events.Add(new CallbackEvent(() =>
++						{
++							var notAuthenticated = Type == ServerType.Dedicated && profile == null && (Settings.RequireAuthentication || Settings.ProfileIDWhitelist.Count > 0);
++							var blacklisted = Type == ServerType.Dedicated && profile != null && Settings.ProfileIDBlacklist.Contains(profile.ProfileID);
++							var notWhitelisted = Type == ServerType.Dedicated && Settings.ProfileIDWhitelist.Count > 0 &&
++								(profile == null || !Settings.ProfileIDWhitelist.Contains(profile.ProfileID));
++
++							if (notAuthenticated)
++							{
++								Log.Write("server", $"Rejected connection from {newConn.EndPoint}; Not authenticated.");
++								SendOrderTo(newConn, "ServerError", RequiresAuthentication);
++								DropClient(newConn);
++							}
++							else if (blacklisted || notWhitelisted)
++							{
++								if (blacklisted)
++									Log.Write("server", $"Rejected connection from {newConn.EndPoint}; In server blacklist.");
++								else
++									Log.Write("server", $"Rejected connection from {newConn.EndPoint}; Not in server whitelist.");
++
++								SendOrderTo(newConn, "ServerError", NoPermission);
++								DropClient(newConn);
++							}
++							else
++								CompleteConnection();
++						}));
++					});
++				}
++				else
++				{
++					if (Type == ServerType.Dedicated && (Settings.RequireAuthentication || Settings.ProfileIDWhitelist.Count > 0))
++					{
++						Log.Write("server", $"Rejected connection from {newConn.EndPoint}; Not authenticated.");
++						SendOrderTo(newConn, "ServerError", RequiresAuthentication);
++						DropClient(newConn);
++					}
++					else
++						CompleteConnection();
++				}
++			}
++			catch (Exception ex)
++			{
++				Log.Write("server", $"Dropping connection {newConn.EndPoint} because an error occurred:");
++				Log.Write("server", ex.ToString());
++				DropClient(newConn);
++			}
++		}
++
++		static byte[] CreateFrame(int client, int frame, byte[] data)
++		{
++			var ms = new MemoryStream(data.Length + 12);
++			ms.Write(data.Length + 4);
++			ms.Write(client);
++			ms.Write(frame);
++			ms.Write(data);
++			return ms.GetBuffer();
++		}
++
++		static byte[] CreateAckFrame(int frame, byte count)
++		{
++			var ms = new MemoryStream(14);
++			ms.Write(6);
++			ms.Write(0);
++			ms.Write(frame);
++			ms.WriteByte((byte)OrderType.Ack);
++			ms.WriteByte(count);
++			return ms.GetBuffer();
++		}
++
++		static byte[] CreateTickScaleFrame(float scale)
++		{
++			var ms = new MemoryStream(17);
++			ms.Write(9);
++			ms.Write(0);
++			ms.Write(0);
++			ms.WriteByte((byte)OrderType.TickScale);
++			ms.Write(scale);
++			return ms.GetBuffer();
++		}
++
++		void DispatchOrdersToClient(Connection c, int client, int frame, byte[] data)
++		{
++			DispatchFrameToClient(c, client, CreateFrame(client, frame, data));
++		}
++
++		void DispatchFrameToClient(Connection c, int client, byte[] frameData)
++		{
++			if (!c.TrySendData(frameData))
++			{
++				DropClient(c);
++				Log.Write("server", $"Dropping client {client.ToString(CultureInfo.InvariantCulture)} because dispatching orders failed!");
++			}
++		}
++
++		bool AnyUndefinedWinStates()
++		{
++			var lastTeam = -1;
++			var remainingPlayers = gameInfo.Players.Where(p => p.Outcome == WinState.Undefined);
++			foreach (var player in remainingPlayers)
++			{
++				if (lastTeam >= 0 && (player.Team != lastTeam || player.Team == 0))
++					return true;
++
++				lastTeam = player.Team;
++			}
++
++			return false;
++		}
++
++		void SetPlayerDefeat(int playerIndex)
++		{
++			var defeatedPlayer = worldPlayers[playerIndex];
++			if (defeatedPlayer == null || defeatedPlayer.Outcome != WinState.Undefined)
++				return;
++
++			defeatedPlayer.Outcome = WinState.Lost;
++			defeatedPlayer.OutcomeTimestampUtc = DateTime.UtcNow;
++
++			// Set remaining players as winners if only one side remains
++			if (!AnyUndefinedWinStates())
++			{
++				var now = DateTime.UtcNow;
++				var remainingPlayers = gameInfo.Players.Where(p => p.Outcome == WinState.Undefined);
++				foreach (var winner in remainingPlayers)
++				{
++					winner.Outcome = WinState.Won;
++					winner.OutcomeTimestampUtc = now;
++				}
++			}
++		}
++
++		void OutOfSync(int frame)
++		{
++			Log.Write("server", $"Out of sync detected at frame {frame}, cancel replay recording");
++
++			// Make sure the written file is not valid
++			// TODO: storing a serverside replay on desync would be extremely useful
++			if (recorder != null)
++			{
++				recorder.Metadata = null;
++
++				recorder.Dispose();
++			}
++
++			// Stop the recording
++			recorder = null;
++		}
++
++		readonly Dictionary<int, byte[]> syncForFrame = [];
++		int lastDefeatStateFrame;
++		ulong lastDefeatState;
++
++		void HandleSyncOrder(int frame, byte[] packet)
++		{
++			if (syncForFrame.TryGetValue(frame, out var existingSync))
++			{
++				if (packet.Length != existingSync.Length)
++				{
++					OutOfSync(frame);
++					return;
++				}
++
++				for (var i = 0; i < packet.Length; i++)
++				{
++					if (packet[i] != existingSync[i])
++					{
++						OutOfSync(frame);
++						return;
++					}
++				}
++			}
++			else
++			{
++				// Update player losses based on the new defeat state.
++				// Do this once for the first player, the check above
++				// guarantees a desync if any other player disagrees.
++				var playerDefeatState = BitConverter.ToUInt64(packet, 1 + 4);
++				if (frame > lastDefeatStateFrame && lastDefeatState != playerDefeatState)
++				{
++					var newDefeats = playerDefeatState & ~lastDefeatState;
++					for (var i = 0; i < worldPlayers.Count; i++)
++						if ((newDefeats & (1UL << i)) != 0)
++							SetPlayerDefeat(i);
++
++					lastDefeatState = playerDefeatState;
++					lastDefeatStateFrame = frame;
++				}
++
++				syncForFrame.Add(frame, packet);
++			}
++		}
++
++		public void DispatchOrdersToClients(Connection conn, int frame, byte[] data)
++		{
++			var from = conn.PlayerIndex;
++			var frameData = CreateFrame(from, frame, data);
++			foreach (var c in Conns.ToList())
++				if (c != conn && c.Validated)
++					DispatchFrameToClient(c, from, frameData);
++
++			RecordOrder(frame, data, from);
++		}
++
++		void RecordOrder(int frame, byte[] data, int from)
++		{
++			recorder?.ReceiveFrame(from, frame, data);
++
++			if (data.Length > 0 && data[0] == (byte)OrderType.SyncHash)
++			{
++				if (data.Length == Order.SyncHashOrderLength)
++					HandleSyncOrder(frame, data);
++				else
++					Log.Write("server", $"Dropped sync order with length {data.Length} from client {from}. Expected length {Order.SyncHashOrderLength}.");
++			}
++		}
++
++		public void DispatchServerOrdersToClients(Order order)
++		{
++			DispatchServerOrdersToClients(order.Serialize());
++		}
++
++		public void DispatchServerOrdersToClients(byte[] data, int frame = 0)
++		{
++			const int From = 0;
++			var frameData = CreateFrame(From, frame, data);
++			foreach (var c in Conns.ToList())
++				if (c.Validated)
++					DispatchFrameToClient(c, From, frameData);
++
++			RecordOrder(frame, data, From);
++		}
++
++		public void DispatchServerOrdersToClients(ReadOnlySpan<Connection> conns, byte[] data, int frame = 0)
++		{
++			const int From = 0;
++			var frameData = CreateFrame(From, frame, data);
++			foreach (var c in conns)
++				if (c.Validated)
++					DispatchFrameToClient(c, From, frameData);
++
++			RecordOrder(frame, data, From);
++		}
++
++		public void ReceiveOrders(Connection conn, int frame, byte[] data)
++		{
++			// Make sure we don't accidentally forward on orders from clients who we have just dropped
++			if (!Conns.Contains(conn))
++				return;
++
++			if (frame == 0)
++				InterpretServerOrders(conn, data);
++			else
++			{
++				// Non-immediate orders must be projected into the future so that all players can
++				// apply them on the same world tick. We can do this directly when forwarding the
++				// packet on to other clients, but sending the same data back to the client that
++				// sent it just to update the frame number would be wasteful. We instead send them
++				// a separate Ack packet that tells them to apply the order from a locally stored queue.
++				// TODO: Replace static latency with a dynamic order buffering system
++				if (data.Length == 0 || data[0] != (byte)OrderType.SyncHash)
++				{
++					frame += OrderLatency;
++					DispatchFrameToClient(conn, conn.PlayerIndex, CreateAckFrame(frame, 1));
++
++					orderBuffer?.AddOrderTimestamp(conn.PlayerIndex);
++
++					// Track the last frame for each client so the disconnect handling can write
++					// an EndOfOrders marker with the correct frame number.
++					// TODO: This should be handled by the order buffering system too
++					conn.LastOrdersFrame = frame;
++				}
++
++				DispatchOrdersToClients(conn, frame, data);
++			}
++
++			GameSave?.DispatchOrders(conn, frame, data);
++		}
++
++		void InterpretServerOrders(Connection conn, byte[] data)
++		{
++			var ms = new MemoryStream(data);
++			var br = new BinaryReader(ms);
++
++			try
++			{
++				while (ms.Position < ms.Length)
++				{
++					var o = Order.Deserialize(null, br);
++					if (o != null)
++						InterpretServerOrder(conn, o);
++				}
++			}
++			catch (EndOfStreamException) { }
++			catch (NotImplementedException) { }
++		}
++
++		public void SendOrderTo(Connection conn, string order, string data)
++		{
++			DispatchOrdersToClient(conn, 0, 0, Order.FromTargetString(order, data, true).Serialize());
++		}
++
++		public void SendFluentMessage(string key, params object[] args)
++		{
++			var conns = Conns.ToArray();
++			SendFluentMessage(conns, key, args);
++		}
++
++		public void SendFluentMessage(ReadOnlySpan<Connection> conns, string key, params object[] args)
++		{
++			var text = FluentMessage.Serialize(key, args);
++			DispatchServerOrdersToClients(conns, Order.FromTargetString("FluentMessage", text, true).Serialize());
++
++			if (Type == ServerType.Dedicated)
++				WriteLineWithTimeStamp(FluentProvider.GetMessage(key, args));
++		}
++
++		public void SendFluentMessageTo(Connection conn, string key, object[] args = null)
++		{
++			var text = FluentMessage.Serialize(key, args);
++			DispatchOrdersToClient(conn, 0, 0, Order.FromTargetString("FluentMessage", text, true).Serialize());
++		}
++
++		void WriteLineWithTimeStamp(string line)
++		{
++			Console.WriteLine($"[{DateTime.Now.ToString(Settings.TimestampFormat, CultureInfo.CurrentCulture)}] {line}");
++		}
++
++		void InterpretServerOrder(Connection conn, Order o)
++		{
++			lock (LobbyInfo)
++			{
++				// Only accept handshake responses from unvalidated clients
++				// Anything else may be an attempt to exploit the server
++				if (!conn.Validated)
++				{
++					if (o.OrderString == "HandshakeResponse")
++						ValidateClient(conn, o.TargetString, o.OrderString);
++					else
++					{
++						Log.Write("server", $"Rejected connection from {conn.EndPoint}; Order `{o.OrderString}` is not a `HandshakeResponse`.");
++						DropClient(conn);
++					}
++
++					return;
++				}
++
++				switch (o.OrderString)
++				{
++					case "Command":
++					{
++						if (!InterpretCommand(o.TargetString, conn))
++						{
++							Log.Write("server", $"Unknown server command: {o.TargetString}");
++							SendFluentMessageTo(conn, UnknownServerCommand, ["command", o.TargetString]);
++						}
++
++						break;
++					}
++
++					case "Chat":
++					{
++						if (!IsMultiplayer || !playerMessageTracker.IsPlayerAtFloodLimit(conn))
++							DispatchOrdersToClients(conn, 0, o.Serialize());
++
++						break;
++					}
++
++					case "GameSaveTraitData":
++					{
++						if (GameSave != null)
++						{
++							var data = MiniYaml.FromString(o.TargetString, o.OrderString).First();
++							GameSave.AddTraitData(OpenRA.Exts.ParseInt32Invariant(data.Key), data.Value);
++						}
++
++						break;
++					}
++
++					case "CreateGameSave":
++					{
++						if (GameSave != null)
++						{
++							// Sanitize potentially malicious input
++							var filename = o.TargetString;
++							var invalidIndex = -1;
++							var invalidChars = Path.GetInvalidFileNameChars();
++							while ((invalidIndex = filename.IndexOfAny(invalidChars)) != -1)
++								filename = filename.Remove(invalidIndex, 1);
++
++							var baseSavePath = Path.Combine(
++								Platform.SupportDir,
++								"Saves",
++								ModData.Manifest.Id,
++								ModData.Manifest.Metadata.Version);
++
++							if (!Directory.Exists(baseSavePath))
++								Directory.CreateDirectory(baseSavePath);
++
++							GameSave.Save(Path.Combine(baseSavePath, filename));
++							DispatchServerOrdersToClients(Order.FromTargetString("GameSaved", filename, true, o.ExtraData));
++						}
++
++						break;
++					}
++
++					case "LoadGameSave":
++					{
++						if (Type == ServerType.Dedicated || State >= ServerState.GameStarted)
++							break;
++
++						// Sanitize potentially malicious input
++						var filename = o.TargetString;
++						var invalidIndex = -1;
++						var invalidChars = Path.GetInvalidFileNameChars();
++						while ((invalidIndex = filename.IndexOfAny(invalidChars)) != -1)
++							filename = filename.Remove(invalidIndex, 1);
++
++						var savePath = Path.Combine(
++							Platform.SupportDir,
++							"Saves",
++							ModData.Manifest.Id,
++							ModData.Manifest.Metadata.Version,
++							filename);
++
++						GameSave = new GameSave(savePath);
++						LobbyInfo.GlobalSettings = GameSave.GlobalSettings;
++						LobbyInfo.Slots = GameSave.Slots;
++
++						// Reassign clients to slots
++						//  - Bot ordering is preserved
++						//  - Humans are assigned on a first-come-first-serve basis
++						//  - Leftover humans become spectators
++
++						// Start by removing all bots and assigning all players as spectators
++						foreach (var c in LobbyInfo.Clients)
++						{
++							if (c.Bot != null)
++								LobbyInfo.Clients.Remove(c);
++							else
++								c.Slot = null;
++						}
++
++						// Rebuild/remap the saved client state
++						// TODO: Multiplayer saves should leave all humans as spectators so they can manually pick slots
++						var adminClientIndex = LobbyInfo.Clients.First(c => c.IsAdmin).Index;
++						foreach (var kv in GameSave.SlotClients)
++						{
++							if (kv.Value.Bot != null)
++							{
++								var bot = new Session.Client()
++								{
++									Index = ChooseFreePlayerIndex(),
++									State = Session.ClientState.NotReady,
++									BotControllerClientIndex = adminClientIndex
++								};
++
++								kv.Value.ApplyTo(bot);
++								LobbyInfo.Clients.Add(bot);
++							}
++							else
++							{
++								// This will throw if the server doesn't have enough human clients to fill all player slots
++								// See TODO above - this isn't a problem in practice because MP saves won't use this
++								var client = LobbyInfo.Clients.First(c => c.Slot == null);
++								kv.Value.ApplyTo(client);
++							}
++						}
++
++						SyncLobbyInfo();
++						SyncLobbyClients();
++
++						break;
++					}
++
++					case "GenerateMap":
++					{
++						if (!GetClient(conn).IsAdmin || State >= ServerState.GameStarted)
++							break;
++
++						if (!LobbyInfo.GlobalSettings.EnableMapGeneration)
++							break;
++
++						try
++						{
++							var yaml = new MiniYaml(o.OrderString, MiniYaml.FromString(o.TargetString, o.OrderString));
++							var args = FieldLoader.Load<MapGenerationArgs>(yaml);
++							var preview = ModData.MapCache[args.Uid];
++							if (preview.Status != MapStatus.Available && preview.Class != MapClassification.Generated)
++								preview.UpdateFromGenerationArgs(args);
++
++							GeneratedMapData = o.TargetString;
++							DispatchServerOrdersToClients(Order.FromTargetString("GenerateMap", o.TargetString, true));
++						}
++						catch (Exception e)
++						{
++							Console.WriteLine(e);
++							throw;
++						}
++
++						break;
++					}
++				}
++			}
++		}
++
++		public void ReceivePing(Connection conn, int[] pingHistory)
++		{
++			// Levels set relative to the default order lag of 3 net ticks (360ms)
++			// TODO: Adjust this once dynamic lag is implemented
++			var latency = pingHistory.Sum() / pingHistory.Length;
++
++			var quality = latency < 240 ? Session.ConnectionQuality.Good :
++				latency < 360 ? Session.ConnectionQuality.Moderate :
++				Session.ConnectionQuality.Poor;
++
++			lock (LobbyInfo)
++			{
++				foreach (var c in LobbyInfo.Clients)
++					if (c.Index == conn.PlayerIndex || (c.Bot != null && c.BotControllerClientIndex == conn.PlayerIndex))
++						c.ConnectionQuality = quality;
++
++				// Update ping without forcing a full update
++				// Note that syncing pings doesn't trigger INotifySyncLobbyInfo
++				if (pingUpdated.ElapsedMilliseconds > 5000)
++				{
++					var nodes = new List<MiniYamlNode>();
++					foreach (var c in LobbyInfo.Clients)
++						nodes.Add(new MiniYamlNode($"ConnectionQuality@{c.Index}", FieldSaver.FormatValue(c.ConnectionQuality)));
++
++					DispatchServerOrdersToClients(Order.FromTargetString("SyncConnectionQuality", nodes.WriteToString(), true));
++					pingUpdated.Restart();
++				}
++			}
++		}
++
++		public Session.Client GetClient(Connection conn)
++		{
++			if (conn == null)
++				return null;
++
++			return LobbyInfo.ClientWithIndex(conn.PlayerIndex);
++		}
++
++		public bool HasClientWonOrLost(Session.Client client) =>
++			worldPlayers.FirstOrDefault(p => p?.ClientIndex == client.Index)?.Outcome != WinState.Undefined;
++
++		public void DropClient(Connection toDrop)
++		{
++			lock (LobbyInfo)
++			{
++				orderBuffer?.RemovePlayer(toDrop.PlayerIndex);
++				Conns.Remove(toDrop);
++
++				var dropClient = LobbyInfo.Clients.FirstOrDefault(c => c.Index == toDrop.PlayerIndex);
++				if (dropClient == null)
++				{
++					toDrop.Dispose();
++					return;
++				}
++
++				if (State == ServerState.GameStarted)
++				{
++					if (dropClient.IsObserver)
++						SendFluentMessage(ObserverDisconnected, "player", dropClient.Name);
++					else if (dropClient.Team > 0)
++						SendFluentMessage(PlayerTeamDisconnected, "player", dropClient.Name, "team", dropClient.Team);
++					else
++						SendFluentMessage(PlayerDisconnected, "player", dropClient.Name);
++				}
++				else
++					SendFluentMessage(LobbyDisconnected, "player", dropClient.Name);
++
++				LobbyInfo.Clients.RemoveAll(c => c.Index == toDrop.PlayerIndex);
++
++				// Client was the server admin
++				// TODO: Reassign admin for game in progress via an order
++				if (Type == ServerType.Dedicated && dropClient.IsAdmin && State == ServerState.WaitingPlayers)
++				{
++					// Remove any bots controlled by the admin
++					LobbyInfo.Clients.RemoveAll(c => c.Bot != null && c.BotControllerClientIndex == toDrop.PlayerIndex);
++
++					var nextAdmin = LobbyInfo.Clients.Where(c1 => c1.Bot == null)
++						.MinByOrDefault(c => c.Index);
++
++					if (nextAdmin != null)
++					{
++						nextAdmin.IsAdmin = true;
++						SendFluentMessage(NewAdmin, "player", nextAdmin.Name);
++					}
++				}
++
++				var disconnectPacket = new MemoryStream(5);
++				disconnectPacket.WriteByte((byte)OrderType.Disconnect);
++				disconnectPacket.Write(toDrop.PlayerIndex);
++				DispatchServerOrdersToClients(disconnectPacket.ToArray(), toDrop.LastOrdersFrame + 1);
++
++				if (gameInfo != null)
++					foreach (var player in gameInfo.Players.Where(p => p.ClientIndex == toDrop.PlayerIndex))
++						player.DisconnectFrame = toDrop.LastOrdersFrame + 1;
++
++				// All clients have left: clean up
++				if (!Conns.Any(c => c.Validated))
++					foreach (var t in serverTraits.WithInterface<INotifyServerEmpty>())
++						t.ServerEmpty(this);
++
++				if (Conns.Any(c => c.Validated) || Type == ServerType.Dedicated)
++					SyncLobbyClients();
++
++				if (Type != ServerType.Dedicated && dropClient.IsAdmin)
++					Shutdown();
++			}
++
++			toDrop.Dispose();
++		}
++
++		public void SyncLobbyInfo()
++		{
++			lock (LobbyInfo)
++			{
++				if (State == ServerState.WaitingPlayers) // Don't do this while the game is running, it breaks things!
++					DispatchServerOrdersToClients(Order.FromTargetString("SyncInfo", LobbyInfo.Serialize(), true));
++
++				foreach (var t in serverTraits.WithInterface<INotifySyncLobbyInfo>())
++					t.LobbyInfoSynced(this);
++			}
++		}
++
++		public void SyncLobbyClients()
++		{
++			if (State != ServerState.WaitingPlayers)
++				return;
++
++			lock (LobbyInfo)
++			{
++				// TODO: Only need to sync the specific client that has changed to avoid conflicts!
++				var clientData = LobbyInfo.Clients.ConvertAll(client => client.Serialize());
++
++				DispatchServerOrdersToClients(Order.FromTargetString("SyncLobbyClients", clientData.WriteToString(), true));
++
++				foreach (var t in serverTraits.WithInterface<INotifySyncLobbyInfo>())
++					t.LobbyInfoSynced(this);
++
++				// The full LobbyInfo includes ping info, so we can delay the next partial ping update
++				// TODO: Replace the special-case ping updates with more general LobbyInfo delta updates
++				pingUpdated.Restart();
++			}
++		}
++
++		public void SyncLobbySlots()
++		{
++			if (State != ServerState.WaitingPlayers)
++				return;
++
++			lock (LobbyInfo)
++			{
++				// TODO: Don't sync all the slots if just one changed!
++				var slotData = LobbyInfo.Slots.Select(slot => slot.Value.Serialize()).ToList();
++
++				DispatchServerOrdersToClients(Order.FromTargetString("SyncLobbySlots", slotData.WriteToString(), true));
++
++				foreach (var t in serverTraits.WithInterface<INotifySyncLobbyInfo>())
++					t.LobbyInfoSynced(this);
++			}
++		}
++
++		public void SyncLobbyGlobalSettings()
++		{
++			if (State != ServerState.WaitingPlayers)
++				return;
++
++			lock (LobbyInfo)
++			{
++				var sessionData = new List<MiniYamlNode> { LobbyInfo.GlobalSettings.Serialize() };
++
++				DispatchServerOrdersToClients(Order.FromTargetString("SyncLobbyGlobalSettings", sessionData.WriteToString(), true));
++
++				foreach (var t in serverTraits.WithInterface<INotifySyncLobbyInfo>())
++					t.LobbyInfoSynced(this);
++			}
++		}
++
++		public void StartGame()
++		{
++			lock (LobbyInfo)
++			{
++				WriteLineWithTimeStamp(FluentProvider.GetMessage(GameStarted));
++
++				// Drop any players who are not ready
++				foreach (var c in Conns.Where(c => !c.Validated || GetClient(c).IsInvalid).ToArray())
++				{
++					SendOrderTo(c, "ServerError", YouWereKicked);
++					DropClient(c);
++				}
++
++				// Enable game saves for singleplayer missions only
++				// TODO: Enable for multiplayer (non-dedicated servers only) once the lobby UI has been created
++				LobbyInfo.GlobalSettings.EnableGameSaves = Type != ServerType.Dedicated && LobbyInfo.NonBotClients.Count() == 1;
++
++				// Player list for win/loss tracking
++				// HACK: NonCombatant and non-Playable players are set to null to simplify replay tracking
++				// The null padding is needed to keep the player indexes in sync with world.Players on the clients
++				// This will need to change if future code wants to use worldPlayers for other purposes
++				var playerRandom = new MersenneTwister(LobbyInfo.GlobalSettings.RandomSeed);
++				foreach (var cmpi in Map.WorldActorInfo.TraitInfos<ICreatePlayersInfo>())
++					cmpi.CreateServerPlayers(Map, LobbyInfo, worldPlayers, playerRandom);
++
++				gameInfo = new GameInformation()
++				{
++					Mod = Game.ModData.Manifest.Id,
++					Version = Game.ModData.Manifest.Metadata.Version,
++					MapUid = Map.Uid,
++					MapTitle = Map.Title,
++					StartTimeUtc = DateTime.UtcNow,
++				};
++
++				if (Map.Class == MapClassification.Generated)
++					gameInfo.MapGenerationArgs = Map.GenerationArgs;
++
++				// Replay metadata should only include the playable players
++				foreach (var p in worldPlayers)
++					if (p != null)
++						gameInfo.Players.Add(p);
++
++				if (recorder != null)
++					recorder.Metadata = new ReplayMetadata(gameInfo);
++
++				SyncLobbyInfo();
++
++				var gameSpeeds = Game.ModData.GetOrCreate<GameSpeeds>();
++				var gameSpeedName = LobbyInfo.GlobalSettings.OptionOrDefault("gamespeed", gameSpeeds.DefaultSpeed);
++
++				var gameSpeed = gameSpeeds.Speeds[gameSpeedName];
++
++				orderBuffer = new OrderBuffer();
++				orderBuffer.Start(gameSpeed, Conns.Where(c => c.Validated).Select(c => c.PlayerIndex));
++
++				State = ServerState.GameStarted;
++
++				if (IsMultiplayer)
++					OrderLatency = gameSpeed.OrderLatency;
++
++				if (GameSave == null && LobbyInfo.GlobalSettings.EnableGameSaves)
++					GameSave = new GameSave();
++
++				var startGameData = "";
++				if (GameSave != null)
++				{
++					GameSave.StartGame(LobbyInfo, Map);
++					if (GameSave.LastOrdersFrame >= 0)
++					{
++						startGameData = new List<MiniYamlNode>()
++						{
++							new("SaveLastOrdersFrame", GameSave.LastOrdersFrame.ToStringInvariant()),
++							new("SaveSyncFrame", GameSave.LastSyncFrame.ToStringInvariant())
++						}.WriteToString();
++					}
++				}
++
++				DispatchServerOrdersToClients(Order.FromTargetString("StartGame", startGameData, true));
++
++				foreach (var t in serverTraits.WithInterface<IStartGame>())
++					t.GameStarted(this);
++
++				var firstFrame = 1;
++				if (GameSave != null && GameSave.LastOrdersFrame >= 0)
++				{
++					GameSave.ParseOrders(LobbyInfo, (frame, client, data) =>
++					{
++						foreach (var c in Conns)
++							if (c.Validated)
++								DispatchOrdersToClient(c, client, frame, data);
++					});
++
++					firstFrame += GameSave.LastOrdersFrame;
++				}
++
++				// ReceiveOrders projects player orders into the future so that all players can
++				// apply them on the same world tick.
++				// Clients require every frame to have an orders packet associated with it, so we must
++				// inject an empty packet for each frame that we are skipping forwards.
++				// TODO: Replace static latency with a dynamic order buffering system
++				var conns = Conns.Where(c => c.Validated).ToList();
++				foreach (var from in conns)
++				{
++					for (var i = 0; i < OrderLatency; i++)
++					{
++						from.LastOrdersFrame = firstFrame + i;
++						var frameData = CreateFrame(from.PlayerIndex, from.LastOrdersFrame, []);
++						foreach (var to in conns)
++							DispatchFrameToClient(to, from.PlayerIndex, frameData);
++
++						RecordOrder(from.LastOrdersFrame, [], from.PlayerIndex);
++						GameSave?.DispatchOrders(from, from.LastOrdersFrame, []);
++					}
++				}
++			}
++		}
++
++		public bool InterpretCommand(string command, Connection conn)
++		{
++			foreach (var t in serverTraits.WithInterface<IInterpretCommand>())
++				if (t.InterpretCommand(this, conn, GetClient(conn), command))
++					return true;
++
++			return false;
++		}
++
++		public ConnectionTarget GetEndpointForLocalConnection()
++		{
++			if (useLocalTransport)
++				return new ConnectionTarget(this);
++			var endpoints = new List<DnsEndPoint>();
++			foreach (var listener in listeners)
++			{
++				var endpoint = (IPEndPoint)listener.LocalEndpoint;
++				if (IPAddress.IPv6Any.Equals(endpoint.Address))
++					endpoints.Add(new DnsEndPoint(IPAddress.IPv6Loopback.ToString(), endpoint.Port));
++				else if (IPAddress.Any.Equals(endpoint.Address))
++					endpoints.Add(new DnsEndPoint(IPAddress.Loopback.ToString(), endpoint.Port));
++				else
++					endpoints.Add(new DnsEndPoint(endpoint.Address.ToString(), endpoint.Port));
++			}
++
++			return new ConnectionTarget(endpoints);
++		}
++
++		public bool MapIsUnknown(string uid)
++		{
++			if (string.IsNullOrEmpty(uid))
++				return true;
++
++			var status = ModData.MapCache[uid].Status;
++			return status != MapStatus.Available && status != MapStatus.DownloadAvailable;
++		}
++
++		public bool MapIsKnown(string uid)
++		{
++			if (string.IsNullOrEmpty(uid))
++				return false;
++
++			if (MapPool != null && !MapPool.Contains(uid))
++				return false;
++
++			var status = ModData.MapCache[uid].Status;
++			return status == MapStatus.Available || status == MapStatus.DownloadAvailable;
++		}
++
++		interface IServerEvent { void Invoke(Server server); }
++
++		sealed class LocalConnectionConnectEvent : IServerEvent
++		{
++			readonly LocalTransport transport;
++			public LocalConnectionConnectEvent(LocalTransport transport) { this.transport = transport; }
++			void IServerEvent.Invoke(Server server) => server.AcceptConnection(null, transport);
++		}
++
++		sealed class ConnectionConnectEvent : IServerEvent
++		{
++			readonly Socket socket;
++			public ConnectionConnectEvent(Socket socket)
++			{
++				this.socket = socket;
++			}
++
++			void IServerEvent.Invoke(Server server)
++			{
++				server.AcceptConnection(socket);
++			}
++		}
++
++		sealed class ConnectionDisconnectEvent : IServerEvent
++		{
++			readonly Connection connection;
++			public ConnectionDisconnectEvent(Connection connection)
++			{
++				this.connection = connection;
++			}
++
++			void IServerEvent.Invoke(Server server)
++			{
++				server.DropClient(connection);
++			}
++		}
++
++		sealed class ConnectionPacketEvent : IServerEvent
++		{
++			readonly Connection connection;
++			readonly int frame;
++			readonly byte[] data;
++
++			public ConnectionPacketEvent(Connection connection, int frame, byte[] data)
++			{
++				this.connection = connection;
++				this.frame = frame;
++				this.data = data;
++			}
++
++			void IServerEvent.Invoke(Server server)
++			{
++				server.ReceiveOrders(connection, frame, data);
++			}
++		}
++
++		sealed class ConnectionPingEvent : IServerEvent
++		{
++			readonly Connection connection;
++			readonly int[] pingHistory;
++
++			// TODO: future net code changes
++#pragma warning disable IDE0052
++			readonly byte queueLength;
++#pragma warning restore IDE0052
++
++			public ConnectionPingEvent(Connection connection, int[] pingHistory, byte queueLength)
++			{
++				this.connection = connection;
++				this.pingHistory = pingHistory;
++				this.queueLength = queueLength;
++			}
++
++			void IServerEvent.Invoke(Server server)
++			{
++				server.ReceivePing(connection, pingHistory);
++			}
++		}
++
++		sealed class CallbackEvent : IServerEvent
++		{
++			readonly Action action;
++
++			public CallbackEvent(Action action)
++			{
++				this.action = action;
++			}
++
++			void IServerEvent.Invoke(Server server)
++			{
++				action();
++			}
++		}
++	}
++}
+diff --git a/src/Settings.cs b/src/Settings.cs
+index 31deb17..08f3505 100644
+--- a/src/Settings.cs
++++ b/src/Settings.cs
+@@ -264,7 +264,11 @@ namespace OpenRA
+ 		public bool DisableGLDebugMessageCallback = false;
+ 
+ 		[Desc("Disable operating-system provided cursor rendering.")]
++#if SWITCH
++		public bool DisableHardwareCursors = true;
++#else
+ 		public bool DisableHardwareCursors = false;
++#endif
+ 
+ 		[Desc("Display index to use in a multi-monitor fullscreen setup.")]
+ 		public int VideoDisplay = 0;
+@@ -353,7 +357,11 @@ namespace OpenRA
+ 
+ 		public MPGameFilters MPGameFilters = MPGameFilters.Waiting | MPGameFilters.Empty | MPGameFilters.Protected | MPGameFilters.Started;
+ 
++#if SWITCH
++		public bool PauseShellmap = true;
++#else
+ 		public bool PauseShellmap = false;
++#endif
+ 
+ 		[Desc("Allow mods to enable the Discord service that can interact with a local Discord client.")]
+ 		public bool EnableDiscordService = true;
+diff --git a/tests/LocalTransportRegression/LocalTransportRegression.csproj b/tests/LocalTransportRegression/LocalTransportRegression.csproj
+new file mode 100644
+index 0000000..93b0492
+--- /dev/null
++++ b/tests/LocalTransportRegression/LocalTransportRegression.csproj
+@@ -0,0 +1,12 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup>
++    <OutputType>Exe</OutputType>
++    <TargetFramework>net9.0</TargetFramework>
++    <DefineConstants>$(DefineConstants);SWITCH</DefineConstants>
++    <ImplicitUsings>enable</ImplicitUsings>
++  </PropertyGroup>
++  <ItemGroup>
++    <Compile Include="../../src/LocalTransport.cs" Link="LocalTransport.cs" />
++    <Compile Include="../../src/Server-Connection.cs" Link="Server-Connection.cs" />
++  </ItemGroup>
++</Project>
+diff --git a/tests/LocalTransportRegression/Program.cs b/tests/LocalTransportRegression/Program.cs
+new file mode 100644
+index 0000000..737be8b
+--- /dev/null
++++ b/tests/LocalTransportRegression/Program.cs
+@@ -0,0 +1,109 @@
++using System.Collections.Concurrent;
++using System.Diagnostics;
++using System.Text;
++using OpenRA;
++using OpenRA.Network;
++using OpenRA.Server;
++
++static class Tests
++{
++    static void Assert(bool ok, string message) { if (!ok) throw new Exception(message); }
++    static byte[] Read(Stream stream, int count)
++    {
++        var result = new byte[count];
++        for (int pos = 0; pos < count;)
++        {
++            int n = stream.Read(result, pos, Math.Min(17, count-pos));
++            Assert(n != 0, "Unexpected EOF"); pos += n;
++        }
++        return result;
++    }
++    static void Wait(Func<bool> condition, string message)
++    {
++        Assert(SpinWait.SpinUntil(condition, 5000), message);
++    }
++    static void RoundTrip(int session)
++    {
++        using var wire = new LocalTransport();
++        var server = new Server();
++        using var connection = new Connection(server, wire, "test");
++        var stream = wire.ClientStream;
++        // Same production Connection loop sends handshake, lobby payload and ping.
++        byte[] header = new byte[8];
++        BitConverter.GetBytes(12345).CopyTo(header,0);
++        BitConverter.GetBytes(connection.PlayerIndex).CopyTo(header,4);
++        Assert(connection.TrySendData(header), "Queue handshake");
++        Assert(Read(stream,8).SequenceEqual(header), "Handshake changed");
++        var payload = Enumerable.Range(0,170000).Select(i => (byte)(i+session)).ToArray();
++        var clientFrame = new MemoryStream();
++        clientFrame.Write(BitConverter.GetBytes(payload.Length+4));
++        clientFrame.Write(BitConverter.GetBytes(42));
++        clientFrame.Write(payload);
++        byte[] bytes=clientFrame.ToArray();
++        // Fragment header across separate writes; server must also split >1024-byte chunks.
++        foreach (var (start,count) in new[]{(0,1),(1,2),(3,5),(8,bytes.Length-8)})
++            stream.Write(bytes,start,count);
++        Wait(() => server.Packets.Count == 1, "Server failed to parse fragmented orders");
++        Assert(server.Packets.TryDequeue(out var packet) && packet.Frame==42 && packet.Data.SequenceEqual(payload), "Order bytes changed");
++        var reply=Encoding.UTF8.GetBytes("lobby/start/"+session);
++        Assert(connection.TrySendData(reply), "Queue reply");
++        Assert(Read(stream,reply.Length).SequenceEqual(reply), "Reply changed");
++        wire.Dispose();
++        Wait(() => server.Disconnected, "Server did not notice client close");
++        Assert(stream.Read(new byte[1],0,1)==0,"Expected EOF after close");
++        Assert(!wire.SendToClient(new byte[]{1}),"Send after close succeeded");
++    }
++    static void Main()
++    {
++        // A bounded watchdog prevents blocked-reader bugs from hanging CI indefinitely.
++        var run=Task.Run(() => {
++            for(int i=0;i<10;i++) RoundTrip(i);
++            using(var wire=new LocalTransport())
++            {
++                var read=Task.Run(()=>wire.ClientStream.Read(new byte[4],0,4));
++                wire.Dispose();
++                Assert(read.Wait(5000)&&read.Result==0,"Closing must release blocked client read");
++            }
++            using(var wire=new LocalTransport())
++            {
++                Assert(wire.Receive(new byte[32],1)==-1,"Timeout must differ from EOF");
++                wire.ClientStream.Write(new byte[]{1,2,3},0,3);
++                wire.Dispose();
++                var b=new byte[32];
++                Assert(wire.Receive(b,1)==3&&b[2]==3,"Close lost queued bytes");
++                Assert(wire.Receive(b,1)==0,"Server must see EOF after drain");
++                Assert(wire.ClientStream.Read(b,0,0)==0,"Zero-length read must not block");
++            }
++            Console.WriteLine("PASS: 10 independent sessions; handshake; fragmented 170 KB orders; replies; close/EOF; blocked-reader cancellation; timeout.");
++        });
++        Assert(run.Wait(30000),"Regression test timed out");
++        run.GetAwaiter().GetResult();
++    }
++}
++
++// Minimal collaborators for the real production Server.Connection code.
++// No replacement socket or Connection implementation is used by these tests.
++namespace OpenRA
++{
++    static class Game { public static long RunTime => Environment.TickCount64; }
++    enum OrderType : byte { Ping = 0x20 }
++    static class Log { public static void Write(string channel,string message) => Console.WriteLine(channel+": "+message); }
++    static class TestWrites
++    {
++        public static void Write(this Stream stream,int value) => stream.Write(BitConverter.GetBytes(value));
++        public static void Write(this Stream stream,long value) => stream.Write(BitConverter.GetBytes(value));
++    }
++}
++namespace OpenRA.Server
++{
++    public sealed class Server
++    {
++        public bool IsMultiplayer => false;
++        public readonly ConcurrentQueue<(int Frame,byte[] Data)> Packets=new();
++        public volatile bool Disconnected;
++        public int ChooseFreePlayerIndex()=>0;
++        public void OnConnectionPacket(Connection connection,int frame,byte[] data)=>Packets.Enqueue((frame,data));
++        public void OnConnectionPing(Connection connection,int[] pings,byte queueLength){}
++        public void OnConnectionDisconnect(Connection connection)=>Disconnected=true;
++    }
++}
+diff --git a/tests/MapDirectoryTrackerStartup/MapDirectoryTrackerStartup.csproj b/tests/MapDirectoryTrackerStartup/MapDirectoryTrackerStartup.csproj
+new file mode 100644
+index 0000000..5e9c22e
+--- /dev/null
++++ b/tests/MapDirectoryTrackerStartup/MapDirectoryTrackerStartup.csproj
+@@ -0,0 +1,4 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><DefineConstants>$(DefineConstants);SWITCH</DefineConstants><NoWarn>$(NoWarn);CS0436;CS0067</NoWarn></PropertyGroup>
++  <ItemGroup><Compile Include="../../src/MapDirectoryTracker.cs" Link="MapDirectoryTracker.cs" /></ItemGroup>
++</Project>
+diff --git a/tests/MapDirectoryTrackerStartup/Program.cs b/tests/MapDirectoryTrackerStartup/Program.cs
+new file mode 100644
+index 0000000..9d70d69
+--- /dev/null
++++ b/tests/MapDirectoryTrackerStartup/Program.cs
+@@ -0,0 +1,47 @@
++using OpenRA;
++using OpenRA.FileSystem;
++
++var package=new Package();
++using(var tracker=new MapDirectoryTracker(package,MapClassification.System))
++{
++    tracker.UpdateMaps(new MapCache());
++    tracker.Dispose(); // shutdown must also tolerate a missing watcher
++}
++if(System.IO.FileSystemWatcher.Creations!=0)throw new Exception("Switch startup called the unavailable watcher API");
++Console.WriteLine("PASS: Switch tracker startup/update/dispose when FileSystemWatcher always throws PlatformNotSupportedException.");
++
++sealed class Package:IReadOnlyPackage { public string Name=>"/nonexistent/switch/map-directory"; }
++namespace OpenRA.FileSystem { public interface IReadOnlyPackage { string Name {get;} } }
++namespace OpenRA
++{
++    public enum MapClassification { System }
++    public enum MapStatus { Available }
++    public sealed class MapPreview
++    {
++        public string Path,Uid;
++        public MapStatus Status;
++        public void Invalidate(){}
++    }
++    public sealed class MapCache:List<MapPreview>
++    {
++        public void LoadMap(string path,IReadOnlyPackage package,MapClassification classification,string uid){}
++    }
++}
++namespace System.IO
++{
++    // Fault-injection stand-in for the unsupported mono-nx API, not a production shim.
++    public sealed class FileSystemWatcher:IDisposable
++    {
++        public static int Creations;
++        public FileSystemWatcher(string path)
++        {
++            Creations++;
++            throw new PlatformNotSupportedException("System.IO.FileSystem.Watcher is not supported on this platform.");
++        }
++        public event FileSystemEventHandler Changed,Created,Deleted;
++        public event RenamedEventHandler Renamed;
++        public bool IncludeSubdirectories {get;set;}
++        public bool EnableRaisingEvents {get;set;}
++        public void Dispose(){}
++    }
++}
+diff --git a/tests/SinglePlayerHandshake/Program.cs b/tests/SinglePlayerHandshake/Program.cs
+new file mode 100644
+index 0000000..3189063
+--- /dev/null
++++ b/tests/SinglePlayerHandshake/Program.cs
+@@ -0,0 +1,63 @@
++using System.Reflection;
++using OpenRA;
++using OpenRA.Network;
++using OpenRA.Server;
++using OpenRA.Primitives;
++
++static void Wait(Func<bool> condition,string message)
++{
++    if(!SpinWait.SpinUntil(condition,20000)) throw new Exception(message);
++}
++if(args.Length!=1) throw new ArgumentException("Pass the extracted package's mono/openra directory.");
++if(!new GraphicSettings().DisableHardwareCursors||!new GameSettings().PauseShellmap)
++    throw new Exception("Expected SWITCH performance defaults in the loaded assembly.");
++Platform.OverrideEngineDir(Path.GetFullPath(args[0]));
++Platform.OverrideSupportDir(Path.Combine(Platform.EngineDir,"Support"));
++Game.InitializeSettings(Arguments.Empty);
++if(Platform.CurrentPlatform!=PlatformType.Linux||Platform.OperatingSystem!="Nintendo Switch")
++    throw new Exception("Original Switch platform compatibility was not restored.");
++var expectedSupport=Path.Combine(Platform.EngineDir,"Support")+Path.DirectorySeparatorChar;
++if(Platform.GetSupportDir(SupportDirType.ModernUser)!=expectedSupport)
++    throw new Exception("Switch support directory compatibility was not restored.");
++Log.AddChannel("debug",null);
++Log.AddChannel("perf",null);
++Log.AddChannel("client",null);
++var mods=new InstalledMods(new[]{Path.Combine(Platform.EngineDir,"mods")},Array.Empty<string>());
++using var data=Game.ModData=new ModData(mods["ra"],mods);
++data.MapCache.LoadPreviewImages=false;
++data.MapCache.LoadMaps(data);
++string[] maps={
++    data.MapCache.First(m=>m.Status==MapStatus.Available&&m.Categories.Contains("Conquest")).Uid,
++    data.MapCache.First(m=>m.Status==MapStatus.Available&&m.Categories.Contains("Campaign")).Uid
++};
++var serverField=typeof(Game).GetField("server",BindingFlags.Static|BindingFlags.NonPublic)!;
++for(int iteration=0;iteration<2;iteration++)
++{
++    var target=Game.CreateLocalServer(maps[iteration],isSkirmish:iteration==0);
++    var server=(Server)serverField.GetValue(null)!;
++    using IConnection client=new NetworkConnection(target);
++    var network=(NetworkConnection)client;
++    Wait(()=>network.ConnectionState==ConnectionState.Connected,"Header handshake failed: "+network.ErrorMessage);
++    var handshake=new HandshakeResponse{
++        Mod="ra",Version=data.Manifest.Metadata.Version,OrdersProtocol=ProtocolVersion.Orders,
++        Client=new Session.Client{Name="Offline regression",PreferredColor=Color.Red,Color=Color.Red}
++    };
++    client.SendImmediate(new[]{new Order("HandshakeResponse",null,false){
++        Type=OrderType.Handshake,IsImmediate=true,TargetString=handshake.Serialize()
++    }});
++    Wait(()=>server.Conns.Count>0&&server.Conns[0].Validated,"Server did not validate client");
++    client.SendImmediate(iteration==0
++        ? new[]{Order.Command("state Ready"),Order.Command("startgame")}
++        : new[]{Order.Command("state Ready")});
++    Wait(()=>server.State==ServerState.GameStarted,"Server did not start the selected map");
++    var packets=(IEnumerable<(int FromClient,byte[] Data)>)typeof(NetworkConnection)
++        .GetField("receivedPackets",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(network)!;
++    Wait(()=>packets.Any(p=>p.Data.Length>4&&p.Data[4]==(byte)OrderType.Fields&&
++        OrderIO.TryParseOrderPacket(p.Data,out var orders)&&orders.Frame==0&&
++        orders.Orders.GetOrders(null).Any(o=>o.OrderString=="StartGame")),
++        "Client did not receive the StartGame order");
++    Console.WriteLine($"PASS {(iteration==0?"skirmish":"campaign")}: real server/client handshake, server start and received StartGame order, map={maps[iteration]} ({data.MapCache[maps[iteration]].Title})");
++    Game.CloseServer();
++    Thread.Sleep(200);
++}
++Log.Dispose();
+diff --git a/tests/SinglePlayerHandshake/SinglePlayerHandshake.csproj b/tests/SinglePlayerHandshake/SinglePlayerHandshake.csproj
+new file mode 100644
+index 0000000..f4b8880
+--- /dev/null
++++ b/tests/SinglePlayerHandshake/SinglePlayerHandshake.csproj
+@@ -0,0 +1,10 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup>
++    <OutputType>Exe</OutputType>
++    <TargetFramework>net9.0</TargetFramework>
++    <ImplicitUsings>enable</ImplicitUsings>
++  </PropertyGroup>
++  <ItemGroup>
++    <Reference Include="$(RuntimeDir)/*.dll" />
++  </ItemGroup>
++</Project>

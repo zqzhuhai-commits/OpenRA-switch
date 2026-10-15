@@ -1,0 +1,38 @@
+OpenRA Switch 第二版修复包（v2）
+
+本版修复上一补丁打开游戏即闪退的问题，并保留单人连接修复与首轮性能优化。
+
+本次日志确认的原因：
+MapDirectoryTracker 在启动扫描地图时调用了 Switch 不支持的 FileSystemWatcher。
+原安装包的 DLL 已有容错，但仓库未包含该源码；上一补丁重编译时遗漏了兼容处理。
+第二版在 SWITCH 构建中跳过文件监视器，同时恢复原包的平台识别和 Support 路径。
+地图启动扫描照常进行；仅不支持游戏运行时自动检测 SD 上的地图文件改动。
+
+安装：
+1. 完全退出游戏。保留当前日志与原文件备份。
+2. 将本包 SD-card 内的 mono 文件夹复制到 SD 卡根目录，同名文件覆盖。
+3. 无论现在使用原版、第一版补丁或回退包，都可直接覆盖本版；需要完整原安装包已安装。
+4. 使用原有图标或 NRO 启动，无需重装 NSP，也不要删除地图和存档。
+5. 若有自定义运行时路径，请保留原 config.ini，只将 [mono] 的 logging 和 runtime_logging 改为 false。
+
+更新文件：
+/mono/openra/OpenRA.Game.dll（及对应调试符号）
+/mono/config.ini（关闭详细日志，保留错误日志）
+不会覆盖 settings.yaml、游戏资源或存档。
+
+仍包含：
+- Switch 单人进程内服务器连接，绕过本机 Socket 故障。
+- 默认暂停菜单背景战场、使用软件光标；已有显式用户设置仍优先。
+
+验证记录：
+- Release/net9.0/SWITCH 编译，0 错误、0 警告。
+- 模拟 FileSystemWatcher 始终抛 PlatformNotSupportedException，验证地图追踪器启动、更新与退出通过。
+- 原包平台标识与 Support 路径检查通过。
+- 连续 10 次传输连接、分段指令、双向收发、关闭测试通过。
+- 使用实际模组/地图：遭遇战“核冬天”和战役“01：激战正酣”，握手、服务器开局和客户端收到 StartGame 通过。
+以上为 Linux x64/.NET 9 测试；尚未在 Switch 真机确认主菜单、实际游戏画面、战役脚本运行和帧率。
+
+请依次测试：主菜单 → 遭遇战开局 → 一关战役。
+如果仍闪退，请保存新生成的 /mono/log.txt、/mono/openra/unhandled.log 和 /mono/openra/Support/Logs。
+新日志应显示 Platform is Linux (Arm64)，并且不再出现 FileSystemWatcher 构造异常。
+如需回退，恢复自己的备份，或使用之前提供的原版恢复包。
