@@ -18,6 +18,8 @@ mapping={
  'AssemblyLoader.cs':'OpenRA.Game/Support/AssemblyLoader.cs',
  'DebugAssertionSuppressor.cs':'OpenRA.Game/Support/DebugAssertionSuppressor.cs',
  'Settings.cs':'OpenRA.Game/Settings.cs',
+ 'MapDirectoryTracker.cs':'OpenRA.Game/Map/MapDirectoryTracker.cs',
+ 'Platform.cs':'OpenRA.Game/Platform.cs',
  'Network-Connection.cs':'OpenRA.Game/Network/Connection.cs',
  'Server-Connection.cs':'OpenRA.Game/Server/Connection.cs',
  'Server.cs':'OpenRA.Game/Server/Server.cs',

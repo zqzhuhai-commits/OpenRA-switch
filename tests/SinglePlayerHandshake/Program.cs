@@ -14,6 +14,11 @@ if(!new GraphicSettings().DisableHardwareCursors||!new GameSettings().PauseShell
 Platform.OverrideEngineDir(Path.GetFullPath(args[0]));
 Platform.OverrideSupportDir(Path.Combine(Platform.EngineDir,"Support"));
 Game.InitializeSettings(Arguments.Empty);
+if(Platform.CurrentPlatform!=PlatformType.Linux||Platform.OperatingSystem!="Nintendo Switch")
+    throw new Exception("Original Switch platform compatibility was not restored.");
+var expectedSupport=Path.Combine(Platform.EngineDir,"Support")+Path.DirectorySeparatorChar;
+if(Platform.GetSupportDir(SupportDirType.ModernUser)!=expectedSupport)
+    throw new Exception("Switch support directory compatibility was not restored.");
 Log.AddChannel("debug",null);
 Log.AddChannel("perf",null);
 Log.AddChannel("client",null);

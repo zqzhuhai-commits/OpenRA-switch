@@ -3,6 +3,23 @@
 适用基线：本仓库 v21 / cf46f6a，以及用户提供的 OpenRA-Switch-Atmosphere (4)(1).zip。
 上游源码固定为 OpenRA playtest-20260222 / 5c51f458f2e9f8ec4921eea8d07823c8358680f8。
 
+## 第二版：启动回归修复
+
+用户新日志 exception-2026-10-15T180503Z/180526Z 明确显示：
+`FileSystemWatcher..ctor -> MapDirectoryTracker..ctor -> MapCache.LoadMaps` 抛 PlatformNotSupportedException。
+核对上传原包的 DLL 后发现，它已有未入库的 watcher 容错，以及 Switch 平台和 Support 路径适配。
+第一版按仓库覆盖文件重编译时遗漏了这些处理，导致尚未进入主菜单就退出。
+
+第二版新增 MapDirectoryTracker.cs 与 Platform.cs 覆盖文件：
+
+- SWITCH 不创建 FileSystemWatcher，启动时地图枚举和加载仍由 MapCache 正常完成。
+- 退出时不访问不存在的 watcher。桌面构建保留文件监视功能。
+- 保持原包的 Linux 兼容平台标识、Nintendo Switch 系统名称与引擎目录下的 Support 路径。
+- 新增 MapDirectoryTrackerStartup：将文件监视器替换为始终抛 PlatformNotSupportedException 的测试替身，验证启动、更新、重复 Dispose 均可完成。
+- 更新完整握手测试，同时检查平台识别、Support 路径及实际地图加载。
+
+以上修复已编译及在桌面回归通过；第二版仍待 Switch 真机确认主菜单和实际游戏画面。
+
 ## 故障证据
 
 最新 server.log 中，本地客户端连接 127.0.0.1 后，Server.Connection.SendReceiveLoop
