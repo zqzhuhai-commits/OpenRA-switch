@@ -92,6 +92,25 @@ namespace OpenRA.Server
 			{
 				while (true)
 				{
+#if SWITCH
+					// mono-nx: blocking receive only. The single-player client is the
+					// active side and keeps sending (orders/sync every tick), so a
+					// blocking read returns promptly and the send queue is drained
+					// after each frame. poll() is avoided as it is unreliable here.
+					var read = socket.Receive(receiveBuffer);
+					if (read == 0)
+					{
+						// Empty packet signals that the client has been dropped
+						return;
+					}
+
+					if (read > 0)
+					{
+						readBuffer.AddRange(receiveBuffer.Take(read));
+						lastReceivedTime = Game.RunTime;
+						TimeoutMessageShown = false;
+					}
+#else
 					// Wait up to 100ms for data to arrive before checking for data to send
 					if (socket.Poll(100000, SelectMode.SelectRead))
 					{
@@ -108,6 +127,8 @@ namespace OpenRA.Server
 							lastReceivedTime = Game.RunTime;
 							TimeoutMessageShown = false;
 						}
+					}
+#endif
 
 						while (readBuffer.Count >= expectLength)
 						{
@@ -153,7 +174,6 @@ namespace OpenRA.Server
 								}
 							}
 						}
-					}
 
 					// Client has been dropped by the server
 					if (sendQueue.IsCompleted)
