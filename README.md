@@ -2,6 +2,16 @@
 
 将 OpenRA（红警 1 / 命令与征服 复刻引擎）移植到 Nintendo Switch 大气层（Atmosphere / hbmenu）的原生 homebrew 客户端，含红警 2 风格 NSP 前端直通图标与全面中文化。
 
+## 最新单人开局修复（待真机验收）
+
+**第二版已修复第一版的 FileSystemWatcher 启动回归**，并恢复原包未入库的平台与存档路径兼容处理。第二版仍待真机确认。
+
+针对遭遇战连接失败、战役点击开始无反应，新增 **Switch 单人进程内传输**，保留原游戏服务器与协议，绕过 mono-nx 的本机 Socket 故障。
+同时关闭 Mono 详细日志、默认暂停菜单背景战场并使用软件光标。
+
+实际服务器/客户端的遭遇战和战役握手、开局指令测试已在 Linux x64 通过；Switch 真机和帧率改善仍待验收。
+构建、测试和证据见 [修复说明](docs/single-player-fix.md)。仅需覆盖 OpenRA.Game.dll 和 mono/config.ini，NRO/NSP 无需重装。
+
 ## 运行前提
 
 - Switch 已破解并安装 **Atmosphere + hbmenu**
@@ -18,7 +28,7 @@
 | 组件 | 说明 |
 |---|---|
 | NRO | mono-nx 交叉构建的 .NET 运行时 + OpenRA 启动器（devkitA64） |
-| 程序集 | 本机 dotnet 以 `TRACE;SWITCH` 编译的 aarch64 OpenRA 程序集（Release） |
+| 程序集 | dotnet 以 `TRACE;SWITCH` 编译的 .NET 9 托管程序集（Release） |
 | 数据 | 官方 playtest-20260222 资源 + `global mix database.dat` + NotoSansSC 中文字体 |
 | 前端 | 自制 NSP forwarder（titleid `010000000000F000`，图标为红警 2 风格徽章） |
 
@@ -78,13 +88,13 @@ zip -r OpenRA-Switch-Atmosphere.zip pkg/
 - ✅ 主界面可进入（v12 起）
 - ✅ 战役列表 / 任务目标 / 加载台词中文生效（v19/v20）
 - ✅ 加载台词字体放大 2 倍（v20）
-- ⏳ 遭遇战 / 战役开局（Socket 阻塞模式修复后待真机验收）
+- ⏳ 遭遇战 / 战役：进程内连接修复通过桌面握手和开局指令测试，待真机验收
 - ⏳ 触屏操作（单指左键 / 双指右键 / 长按）待验收
 
 遇到闪退请按 Issues 模板（`.github/ISSUE_TEMPLATE/bug_report.md`）提交日志，重点是 `mono/openra/Support/Logs/` 与 `unhandled.log`。
 
 ## 已知限制
 
-- 遭遇战/战役已修复"连接中"闪退（socket 阻塞模式容错），若仍有问题请提供 `mono/openra/Support/Logs` 与 `/mono/openra/unhandled.log`
+- 单人模式已改为进程内传输；真机仍需验证实际地图运行。多人联机未在本次修复范围内验证。若仍有问题请提供 `mono/openra/Support/Logs` 与 `/mono/openra/unhandled.log`
 - 部分游戏内单位/建筑名（rules.ftl）与系统通知（common.ftl）仍有少量英文，逐步补齐中
 - 仅支持大气层 homebrew 通道；不支持 Switchroot/Linux 方案

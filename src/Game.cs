@@ -998,7 +998,14 @@ namespace OpenRA
 			{
 				new(IPAddress.Loopback, 0)
 			};
+#if SWITCH
+			// Campaign and skirmish use the same server protocol without mono-nx sockets.
+			settings.AdvertiseOnLocalNetwork = false;
+			server = new Server.Server(endpoints, settings, ModData,
+				isSkirmish ? ServerType.Skirmish : ServerType.Local, useLocalTransport: true);
+#else
 			server = new Server.Server(endpoints, settings, ModData, isSkirmish ? ServerType.Skirmish : ServerType.Local);
+#endif
 
 			return server.GetEndpointForLocalConnection();
 		}
