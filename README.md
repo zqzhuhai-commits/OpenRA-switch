@@ -73,16 +73,12 @@ zip -r OpenRA-Switch-Atmosphere.zip pkg/
 
 完整安装包（SD 卡直接覆盖）：见 Releases 页 `OpenRA-Switch-Atmosphere.zip`（含 NRO、mono 运行时、mods、翻译、NSP 前端）。
 
-## 实测状态（2026-10-16 v24）
+## 实测状态（v25）
 
-- ✅ 主界面可进入（v12 起）
-- ✅ 战役列表 / 任务目标 / 加载台词中文生效（v19/v20）
-- ✅ 加载台词字体放大 2 倍（v20）
-- ✅ 遭遇战可玩（v24：并入进程内传输 LocalTransport，真机验证，绕开 libnx socket）
-- ✅ 战役/任务模式可开始（v24：点"开始"时客户端自动先就绪再开局，修复服务器 NotReady 拒绝）
-- ⏳ 触屏操作（单指左键 / 双指右键 / 长按）待验收
-
-遇到闪退请按 Issues 模板（`.github/ISSUE_TEMPLATE/bug_report.md`）提交日志，重点是 `mono/openra/Support/Logs/` 与 `unhandled.log`。
+- 遭遇战、战役可玩（修复包 LocalTransport + LobbyLogic 战役就绪修复）
+- 声音修复：OpenAL 在 Switch 不可用 → 新增 SDL2 回调混音引擎（Sdl2SoundEngine），Windows 平台层 SWITCH 分支启用，失败仍降级静音
+- 翻译全量：rules/hotkeys/chrome/campaign/lua/common 七个 fluent 文件全部中文化（含单位/建筑/技能/通知/设置/按键名/编辑器），check-yaml 通过
+- 触屏手势、150% 缩放、帧率=游戏刻率、光标放大、720p 等已配置
 
 ## 已知限制
 

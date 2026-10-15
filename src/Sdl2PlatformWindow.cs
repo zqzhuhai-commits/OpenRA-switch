@@ -164,7 +164,11 @@ namespace OpenRA.Platforms.Default
 
 				// Note: This must be called after the CanCreateGLWindow checks above,
 				// which needs to create and destroy its own SDL contexts as a workaround for specific buggy drivers
+#if SWITCH
+				if (SDL.SDL_Init(SDL.SDL_INIT_VIDEO | SDL.SDL_INIT_AUDIO) != 0)
+#else
 				if (SDL.SDL_Init(SDL.SDL_INIT_VIDEO) != 0)
+#endif
 					Log.Write("graphics", $"SDL initialisation failed: {SDL.SDL_GetError()}");
 
 #if SWITCH
