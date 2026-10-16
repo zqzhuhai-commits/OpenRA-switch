@@ -506,9 +506,8 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 
 		public static IEnumerable<float> ValidUIScales(Size nativeResolution, Size minimumResolution)
 		{
-			var maxScales = new float2(nativeResolution) / new float2(minimumResolution);
-			var maxScale = Math.Min(maxScales.X, maxScales.Y);
-			return new[] { 0.75f, 0.8f, 0.9f, 1f, 1.25f, 1.5f, 1.75f, 2f }.Where(x => x <= maxScale);
+			// Switch users explicitly choose these three UI sizes, including on 720p.
+			return new[] { 1f, 1.5f, 2f };
 		}
 	}
 }

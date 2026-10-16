@@ -72,10 +72,10 @@ while(server.State!=ServerState.GameStarted && timer.ElapsedMilliseconds<20000){
 if(server.State!=ServerState.GameStarted)throw new Exception("Mission UI did not start server");
 var scaling=data.ObjectCreator.FindType("SwitchDisplaySettingsLogic")!;
 var scales=(IEnumerable<float>)scaling.GetMethod("ValidUIScales")!.Invoke(null,new object[]{new Size(1280,720),new Size(1024,720)})!;
-if(!scales.SequenceEqual(new[]{0.75f,0.8f,0.9f,1f}))throw new Exception("Unsafe 720p scale options");
+if(!scales.SequenceEqual(new[]{1f,1.5f,2f}))throw new Exception("Missing requested Switch scale options");
 var defaults=new GraphicSettings();
 if(defaults.UIScale!=1f || !defaults.CapFramerate || defaults.MaxFramerate!=30 || defaults.CapFramerateToGameFps)throw new Exception("Switch frame/UI defaults mismatch");
-Console.WriteLine("PASS: 720p scale options 75/80/90/100%; default frame cap 30fps and UI scale 100%.");
+Console.WriteLine("PASS: 720p scale options 100/150/200%; default frame cap 30fps and UI scale 100%.");
 Console.WriteLine("PASS: actual mission widget loads its briefing and selected preview; Start button invokes real local handshake and starts campaign server; repeated clicks are guarded. Font metrics and window size are test substitutes; no GPU/Lua gameplay test.");
 om.Dispose();Game.CloseServer();Log.Dispose();
 
