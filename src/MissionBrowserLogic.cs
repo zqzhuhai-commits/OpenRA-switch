@@ -622,49 +622,10 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 				var fsPlayer = fullscreenVideoPlayer.Get<VideoPlayerWidget>("PLAYER");
 				fullscreenVideoPlayer.Visible = true;
 				PlayVideo(fsPlayer, missionData.StartVideo, PlayingVideo.GameStart,
-					() => StartLocalServer(selectedMap.Uid, orders, onExit));
+					() => Game.CreateAndStartLocalServer(selectedMap.Uid, orders));
 			}
 			else
-				StartLocalServer(selectedMap.Uid, orders, onExit);
+				Game.CreateAndStartLocalServer(selectedMap.Uid, orders);
 		}
-
-#if SWITCH
-		// The external OpenRA.Game.dll's CreateAndStartLocalServer relies on the LobbyInfoChanged
-		// event to send the lobby orders automatically, but that event does not fire on the Switch
-		// (mission client stays NotReady, so CheckAutoStart never starts the game).
-		// Create the local server manually, connect, then send the orders (option + state Ready)
-		// as soon as the connection is established; the server's CheckAutoStart then starts the map.
-		void StartLocalServer(string uid, List<Order> orders, Action onExit)
-		{
-			var endpoint = Game.CreateLocalServer(uid, isSkirmish: false);
-			var om = Game.JoinServer(endpoint, "");
-			new Thread(() =>
-			{
-				try
-				{
-					var connected = SpinWait.SpinUntil(() =>
-					{
-						var conn = om.Connection as NetworkConnection;
-						return conn != null && conn.ConnectionState == ConnectionState.Connected;
-					}, 30000);
-
-					if (connected)
-						foreach (var o in orders)
-							om.IssueOrder(o);
-					else
-						Log.Write("debug", "Mission SWITCH: local connection did not become ready");
-				}
-				catch (Exception ex)
-				{
-					Log.Write("debug", $"Mission SWITCH start failed: {ex}");
-				}
-			}) { IsBackground = true, Name = "Mission start" }.Start();
-		}
-#else
-		void StartLocalServer(string uid, List<Order> orders, Action onExit)
-		{
-			Game.CreateAndStartLocalServer(uid, orders);
-		}
-#endif
 	}
 }

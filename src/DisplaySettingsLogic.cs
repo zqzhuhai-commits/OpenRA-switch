@@ -205,15 +205,9 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 
 			var minResolution = viewportSizes.MinEffectiveResolution;
 			var resolution = Game.Renderer.Resolution;
-#if SWITCH
-			// On the Switch the UI scale is intentionally user-selectable (100/150/200%);
-			// the resolution-based safety check would wrongly disable it at 720p.
-			var disableUIScale = false;
-#else
 			var disableUIScale = world.Type != WorldType.Shellmap ||
 				resolution.Width * graphicSettings.UIScale < 1.25f * minResolution.Width ||
 				resolution.Height * graphicSettings.UIScale < 1.25f * minResolution.Height;
-#endif
 
 			uiScaleDropdown.IsDisabled = () => disableUIScale;
 
@@ -511,12 +505,7 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 			var maxScales = new float2(Game.Renderer.NativeResolution) / new float2(viewportSizes.MinEffectiveResolution);
 			var maxScale = Math.Min(maxScales.X, maxScales.Y);
 
-#if SWITCH
-			// On the Switch offer exactly the three scales the user expects: 100/150/200%.
-			var validScales = new[] { 1f, 1.5f, 2f };
-#else
 			var validScales = new[] { 1f, 1.25f, 1.5f, 1.75f, 2f }.Where(x => x <= maxScale);
-#endif
 			dropdown.ShowDropDown("LABEL_DROPDOWN_TEMPLATE", 500, validScales, SetupItem);
 		}
 	}

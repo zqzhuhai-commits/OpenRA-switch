@@ -465,12 +465,6 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 				if (modData.MapCache[map.Uid].Status == MapStatus.Available)
 				{
 					gameStarting = true;
-#if SWITCH
-					// In-process single-player servers refuse to start while the local
-					// client is still NotReady (campaign lobby). Mark ourselves ready first.
-					if (orderManager.LocalClient != null && !orderManager.LocalClient.IsReady)
-						orderManager.IssueOrder(Order.Command("state Ready"));
-#endif
 					orderManager.IssueOrder(Order.Command("startgame"));
 				}
 				else
