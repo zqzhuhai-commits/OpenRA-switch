@@ -249,16 +249,32 @@ namespace OpenRA
 
 		public bool CursorDouble = true;
 		public WorldViewport ViewportDistance = WorldViewport.Close;
+		#if SWITCH
+		public float UIScale = 1f;
+#else
 		public float UIScale = 1.5f;
+#endif
 
 		[Desc("Add a frame rate limiter.")]
+		#if SWITCH
+		public bool CapFramerate = true;
+#else
 		public bool CapFramerate = false;
+#endif
 
 		[Desc("At which frames per second to cap the framerate.")]
+		#if SWITCH
+		public int MaxFramerate = 30;
+#else
 		public int MaxFramerate = 60;
+#endif
 
 		[Desc("Set a frame rate limit of 1 render frame per game simulation frame (overrides CapFramerate/MaxFramerate).")]
+		#if SWITCH
+		public bool CapFramerateToGameFps = false;
+#else
 		public bool CapFramerateToGameFps = true;
+#endif
 
 		[Desc("Disable the OpenGL debug message callback feature.")]
 		public bool DisableGLDebugMessageCallback = false;

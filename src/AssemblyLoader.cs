@@ -38,7 +38,15 @@ namespace OpenRA.Support
 			// instances are stored under a different type identity, surfacing as
 			// spurious "Actor type X: Chronoshiftable requires actors to have the
 			// Mobile or Husk traits." failures.
-			return Assembly.Load(Path.GetFileNameWithoutExtension(mainAssembly));
+			var name = Path.GetFileNameWithoutExtension(mainAssembly);
+			try { return Assembly.Load(name); }
+			catch (FileNotFoundException)
+			{
+				// Added mod modules need not appear in the launcher's prebuilt deps.json.
+				// Keep a single shared type identity by loading into the default context.
+				var loaded = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == name);
+				return loaded ?? AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.GetFullPath(mainAssembly));
+			}
 		}
 
 		public AssemblyLoader(string assemblyFile)

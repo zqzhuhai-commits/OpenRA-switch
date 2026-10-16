@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><TargetFramework>net9.0</TargetFramework><AssemblyName>OpenRA.SwitchUI</AssemblyName><GenerateDependencyFile>false</GenerateDependencyFile><ImplicitUsings>disable</ImplicitUsings></PropertyGroup>
+<ItemGroup><Reference Include="$(RuntimeDir)/*.dll" /></ItemGroup>
+</Project>

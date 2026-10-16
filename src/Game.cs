@@ -310,13 +310,26 @@ namespace OpenRA
 
 			void LobbyReady()
 			{
+				if (om == null) return;
+				if (OrderManager != om)
+				{
+					LobbyInfoChanged -= LobbyReady;
+					return;
+				}
+				// Partial lobby updates can precede the validated local client. Do not
+				// consume the campaign setup callback until this session is ready.
+				if (om.LobbyInfo.ClientWithIndex(om.Connection.LocalClientId) == null ||
+					om.LobbyInfo.GlobalSettings.Map != mapUID)
+					return;
 				LobbyInfoChanged -= LobbyReady;
+				Log.Write("debug", $"Local mission lobby ready: {mapUID}; sending setup orders.");
 				foreach (var o in setupOrders)
 					om.IssueOrder(o);
 			}
 
 			LobbyInfoChanged += LobbyReady;
 
+			Log.Write("debug", $"Local mission launch requested: {mapUID}");
 			om = JoinServer(CreateLocalServer(mapUID), "");
 		}
 
@@ -983,6 +996,10 @@ namespace OpenRA
 
 		public static ConnectionTarget CreateLocalServer(string map, bool isSkirmish = false)
 		{
+#if SWITCH
+			// Replacing a pending local launch must also stop its previous server.
+			CloseServer();
+#endif
 			var settings = new ServerSettings()
 			{
 				Name = "Skirmish Game",

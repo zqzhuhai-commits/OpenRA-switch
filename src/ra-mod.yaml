@@ -109,7 +109,7 @@ Cursors:
 Chrome:
 	ra|chrome.yaml
 
-Assemblies: OpenRA.Mods.Common.dll, OpenRA.Mods.Cnc.dll
+Assemblies: OpenRA.Mods.Common.dll, OpenRA.Mods.Cnc.dll, OpenRA.SwitchUI.dll
 
 ChromeLayout:
 	common|chrome/ingame.yaml
@@ -133,7 +133,7 @@ ChromeLayout:
 	common|chrome/mainmenu.yaml
 	common|chrome/mainmenu-prompts.yaml
 	common|chrome/settings.yaml
-	common|chrome/settings-display.yaml
+	ra|chrome/switch-settings-display.yaml
 	common|chrome/settings-audio.yaml
 	common|chrome/settings-input.yaml
 	common|chrome/settings-hotkeys.yaml
@@ -161,7 +161,7 @@ ChromeLayout:
 	common|chrome/musicplayer.yaml
 	common|chrome/tooltips.yaml
 	common|chrome/assetbrowser.yaml
-	common|chrome/missionbrowser.yaml
+	ra|chrome/switch-missionbrowser.yaml
 	common|chrome/confirmation-dialogs.yaml
 	common|chrome/editor.yaml
 	common|chrome/playerprofile.yaml
