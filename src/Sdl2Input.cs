@@ -279,7 +279,7 @@ namespace OpenRA.Platforms.Default
 						var pos = EventPosition(device, input.X, input.Y);
 
 						var delta = lockedMousePosition == null
-							? EventPosition(device, e.motion.xrel * 2, e.motion.yrel * 2)
+							? EventPosition(device, e.motion.xrel * 4, e.motion.yrel * 4)
 							: mousePos - lockedMousePosition.Value;
 
 						pendingMotion = new MouseInput(
