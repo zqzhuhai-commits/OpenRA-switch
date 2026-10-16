@@ -164,13 +164,13 @@ button-kick-player = 踢出此玩家
 button-vote-kick-player = 投票踢出此玩家
 
 dialog-kick =
-    .title = 标题
-    .prompt = 提示
-    .confirm = 确定
+    .title = 踢出 { $player }？
+    .prompt = 该玩家将无法重新加入游戏。
+    .confirm = 踢出
 
 dialog-vote-kick =
-    .title = 标题
-    .prompt = 提示
+    .title = 投票踢出 { $player }？
+    .prompt = 该玩家将无法重新加入游戏。
     .prompt-break-bots =
     { $bots ->
         [one] 踢出房主将同时踢出 1 个 AI。
@@ -239,9 +239,9 @@ dialog-surrender =
     .cancel = 保留
 
 dialog-error-max-player =
-    .title = 标题
-    .prompt = 提示
-    .confirm = 确定
+    .title = 错误：超出最大玩家数
+    .prompt = 定义的玩家过多（{ $players }/{ $max }）。
+    .confirm = 返回
 
 dialog-exit-map-editor =
     .title = 标题
@@ -294,7 +294,7 @@ label-unrevealed-terrain = 未揭示地形
 
 ## KickClientLogic
 dialog-kick-client =
-    .prompt = 提示
+    .prompt = 踢出 { $player }？
 
 ## KickSpectatorsLogic
 dialog-kick-spectators =
@@ -417,10 +417,9 @@ dialog-settings-restart =
     .cancel = 稍后重启
 
 dialog-settings-reset =
-    .title = 标题
-    .prompt = 提示
-    此面板中的所有设置吗？
-    .confirm = 确定
+    .title = 重置 { $panel }
+    .prompt = 确定要重置此面板中的所有设置吗？
+    .confirm = 重置
     .cancel = 取消
 
 ## AssetBrowserLogic
@@ -442,9 +441,9 @@ dialog-rename-save =
     .confirm = 确定
 
 dialog-delete-save =
-    .title = 标题
-    .prompt = 提示
-    .confirm = 确定
+    .title = 删除所选游戏存档？
+    .prompt = 删除“{ $save }”。
+    .confirm = 删除
 
 dialog-delete-all-saves =
     .title = 标题
@@ -458,9 +457,9 @@ dialog-delete-all-saves =
 notification-save-deletion-failed = 删除存档文件“{ $savePath }”失败。详情见日志。
 
 dialog-overwrite-save =
-    .title = 标题
-    .prompt = 提示
-    .confirm = 确定
+    .title = 覆盖已保存的游戏？
+    .prompt = 覆盖 { $file }？
+    .confirm = 覆盖
 
 ## MainMenuLogic
 label-loading-news = 正在加载新闻
@@ -494,9 +493,9 @@ label-map-unavailable-count =
 notification-map-deletion-failed = 删除地图“{ $map }”失败。详情见 debug.log 文件。
 
 dialog-delete-map =
-    .title = 标题
-    .prompt = 提示
-    .confirm = 确定
+    .title = 删除地图
+    .prompt = 删除地图“{ $title }”？
+    .confirm = 删除
 
 dialog-delete-all-maps =
     .title = 标题
@@ -571,9 +570,9 @@ dialog-rename-replay =
     .confirm = 确定
 
 dialog-delete-replay =
-    .title = 标题
-    .prompt = 提示
-    .confirm = 确定
+    .title = 删除所选回放？
+    .prompt = 删除回放 { $replay }？
+    .confirm = 删除
 
 dialog-delete-all-replays =
     .title = 标题
@@ -627,10 +626,10 @@ label-internet-server-nat-C = ）：
 label-local-server = 本地服务器：
 
 dialog-server-creation-failed =
-    .prompt = 提示
+    .prompt = 无法监听端口 { $port }。
     .prompt-port-used = 请检查该端口是否已被占用。
     .prompt-error = 错误："{ $message }"（{ $code }）。
-    .title = 标题
+    .title = 服务器创建失败
     .cancel = 返回
 
 ## ServerListLogic
